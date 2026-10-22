@@ -9,27 +9,23 @@ then chats entirely offline: no account, no cloud, and conversations never leave
 - **Memory:** weights are memory-mapped, so they live in the page cache rather than the app's heap.
   Only the conversation (KV cache) is allocated. Follow-up messages reuse the cached prompt, so
   only new text is processed.
-- **Models:** a curated list (below), each pinned to a Hugging Face commit and checked against its
-  SHA-256 after download, plus import of any GGUF file.
-- **UI:** Kotlin + Jetpack Compose, Material 3. No analytics, no network calls except model downloads.
+- **Model:** no picker. Autark chooses for the phone: Qwen 3.5 2B on 6 GB+ RAM, Qwen 3.5 0.8B
+  otherwise. Each is pinned to a Hugging Face commit and checked against its SHA-256 after download.
+  Upgrading from 0.1.0 deletes any other downloaded models.
+- **UI:** Kotlin + Jetpack Compose, Material 3, Inter Tight. No analytics, no network calls except the
+  model download.
 
 | Model | Size | Phone RAM | License |
 |---|---|---|---|
-| Qwen 3.5 0.8B | 533 MB | 3 GB+ | Apache 2.0 |
-| LFM 2.5 1.2B | 731 MB | 4 GB+ | LFM Open License 1.0 |
-| Gemma 3 1B | 806 MB | 4 GB+ | Gemma Terms |
-| Llama 3.2 1B | 808 MB | 4 GB+ | Llama 3.2 Community |
-| Qwen 3.5 2B (recommended, 6 GB+) | 1.3 GB | 6 GB+ | Apache 2.0 |
-| Llama 3.2 3B | 2.0 GB | 6 GB+ | Llama 3.2 Community |
-| Gemma 4 E2B (Indian languages) | 3.1 GB | 8 GB+ | Apache 2.0 |
-| Qwen 3.5 4B | 2.7 GB | 8 GB+ | Apache 2.0 |
+| Qwen 3.5 0.8B | 533 MB | under 6 GB | Apache 2.0 |
+| Qwen 3.5 2B | 1.3 GB | 6 GB+ | Apache 2.0 |
 
 ## Layout
 
 ```
 app/src/main/cpp/autark_jni.cpp    JNI bridge: load, chat-template rendering, prefix-cached prompt, streaming
 app/src/main/java/.../engine/      LlamaEngine: one model, one dedicated thread
-app/src/main/java/.../models/      Catalog + ModelManager (DownloadManager, SHA-256 check, GGUF import)
+app/src/main/java/.../models/      Catalog (model per RAM tier) + ModelManager (DownloadManager, SHA-256 check)
 app/src/main/java/.../data/        Chats (one JSON file each) and settings
 app/src/main/java/.../ui/          Compose screens
 third_party/llama.cpp              llama.cpp source, tag v0.7.0
