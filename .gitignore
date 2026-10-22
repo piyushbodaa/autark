@@ -1,0 +1,26 @@
+# Secrets
+keystore.properties
+*.jks
+*.keystore
+local.properties
+# Build
+build/
+**/build/
+.gradle/
+.kotlin/
+*.aab
+*.apk
+*.idx
+captures/
+.externalNativeBuild/
+.cxx/
+# IDE
+.idea/
+*.iml
+.DS_Store
+# Models
+*.gguf
+*.bin
+*.onnx
+*.tflite
+*.task

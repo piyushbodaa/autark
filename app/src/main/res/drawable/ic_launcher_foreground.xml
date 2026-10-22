@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "A." set in Inter Tight SemiBold, as on piyushbodaa.com; the full stop is the one accent. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@color/night_ink"
+        android:pathData="M41.64 69H35.83L46.42 39H53.11L63.67 69H57.88L49.87 45.15H49.63ZM41.84 57.23H57.65V61.6H41.84Z" />
+    <path
+        android:fillColor="@color/accent"
+        android:pathData="M66.17,66a3,3 0,1 1,6 0a3,3 0,1 1,-6 0z" />
+</vector>

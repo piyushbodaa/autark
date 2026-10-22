@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Same tokens as piyushbodaa.com's stylesheet. -->
+<resources>
+    <color name="paper">#FFF5F5F3</color>
+    <color name="night">#FF141414</color>
+    <color name="night_ink">#FFF2F2F0</color>
+    <color name="accent">#FFF0552E</color>
+</resources>
