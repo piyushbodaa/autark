@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autark icon</title>
+<meta name="description" content="Autark's launcher icon: Inter Tight's A with an orange core where the crossbar was, in a headline's two tones.">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&display=swap">
+<style>
+:root {
+  --paper: #F5F5F3; --paper-2: #EBEBE8; --ink: #1C1C1B; --ink-2: #3A3A39;
+  --grey: #8B8B88; --muted: #666663; --line: #D4D4CF;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: 'Inter Tight', 'Helvetica Neue', Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+svg, img { display: block; }
+a { color: inherit; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+@media (min-width: 720px) { .wrap { padding: 0 48px; } }
+
+header .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 24px; padding-bottom: 24px; }
+.lockup { display: flex; align-items: center; gap: 12px; font-size: 18px; font-weight: 600; line-height: 1; text-transform: uppercase; color: var(--ink-2); }
+.label, figcaption, .tags { font-size: 13px; font-weight: 500; text-transform: uppercase; color: var(--muted); }
+h1, h2 { margin: 0; font-weight: 500; text-transform: uppercase; letter-spacing: -0.012em; color: var(--ink-2); }
+h1 { font-size: clamp(34px, 5.4vw, 56px); line-height: 1.04; }
+h2 { font-size: clamp(26px, 3.4vw, 38px); line-height: 1.06; }
+h1 span, h2 span { color: var(--grey); }
+.lede { margin: 0; max-width: 440px; font-size: 17px; font-weight: 500; line-height: 1.45; color: var(--muted); }
+
+section { padding: 64px 0; border-top: 1px solid var(--line); }
+section.alt { background: var(--paper-2); }
+.head { display: flex; flex-direction: column; gap: 12px; margin-bottom: 44px; }
+figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+figcaption { text-align: center; }
+figcaption b { display: block; font-weight: 500; color: var(--ink-2); }
+
+.hero { display: flex; flex-wrap: wrap; align-items: center; gap: 48px 96px; }
+.hero > svg { width: min(400px, 100%); height: auto; flex: none; }
+.hero-text { flex: 1 1 320px; display: flex; flex-direction: column; gap: 28px; }
+.tags { display: flex; flex-wrap: wrap; gap: 12px 28px; }
+
+.grid { display: grid; gap: 40px 28px; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.grid svg { width: 100%; max-width: 200px; height: auto; }
+.phones { display: grid; gap: 32px 24px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.phones img { width: 100%; max-width: 260px; height: auto; aspect-ratio: 540 / 1200; border-radius: 22px; box-shadow: 0 0 0 1px var(--line); }
+
+.swatches { display: flex; flex-wrap: wrap; gap: 24px 48px; margin-top: 56px; }
+.swatch { display: flex; align-items: center; gap: 14px; font-size: 13px; font-weight: 500; text-transform: uppercase; color: var(--muted); }
+.swatch i { width: 44px; height: 44px; border-radius: 50%; flex: none; }
+.swatch b { display: block; font-weight: 500; color: var(--ink-2); }
+
+.sizes { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 32px 48px; margin-top: 56px; }
+.sizes svg { width: auto; }
+.options .grid svg { max-width: 180px; }
+.small { display: flex; align-items: center; gap: 16px; }
+.small svg { width: auto; }
+
+footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding-top: 32px; padding-bottom: 48px; }
+footer { border-top: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position: absolute;" aria-hidden="true" focusable="false">
+<defs>
+<!-- The mark, on Android's 108-unit adaptive-icon grid: the quiet leg, the lit leg, and the core. -->
+<path id="quiet" d="M53.5 30L59.15 30L75.34 76L66.47 76L54.19 39.43L53.5 39.43Z"/>
+<path id="lit" d="M32.66 76L48.89 30L54 30L54 39.43L53.81 39.43L41.56 76Z"/>
+<circle id="core" cx="54" cy="61.3" r="4.6"/>
+<path id="lambda" d="M41.56 76L32.66 76L48.89 30L59.15 30L75.34 76L66.47 76L54.19 39.43L53.81 39.43Z"/>
+<path id="bar" d="M41.87 57.96H66.11V64.65H41.87Z"/>
+<path id="squircle" d="M54 18C25.2 18 18 25.2 18 54C18 82.8 25.2 90 54 90C82.8 90 90 82.8 90 54C90 25.2 82.8 18 54 18Z"/>
+<path id="teardrop" d="M54 18A36 36 0 0 1 90 54L90 79.2A10.8 10.8 0 0 1 79.2 90L54 90A36 36 0 0 1 54 18Z"/>
+<g id="night">
+<use href="#quiet" fill="#7C7C79"/>
+<use href="#lit" fill="#F2F2F0"/>
+<use href="#core" fill="#F0552E"/>
+</g>
+<g id="icon">
+<circle cx="54" cy="54" r="36" fill="#141414"/>
+<use href="#night"/>
+</g>
+<g id="paper">
+<use href="#quiet" fill="#8B8B88"/>
+<use href="#lit" fill="#3A3A39"/>
+<use href="#core" fill="#F0552E"/>
+</g>
+<g id="one-tone">
+<circle cx="54" cy="54" r="36" fill="#141414"/>
+<use href="#lambda" fill="#F2F2F0"/>
+<use href="#core" fill="#F0552E"/>
+</g>
+<g id="headline">
+<circle cx="54" cy="54" r="36" fill="#141414"/>
+<path fill="#F2F2F0" d="M35.93 50.46H33.45L39.03 34.96H41.73L47.29 50.46H44.82L40.43 37.78H40.31ZM36.35 44.39H44.4V46.35H36.35ZM58.34 34.96H60.67V45.15Q60.67 46.78 59.91 48.03Q59.15 49.28 57.76 50Q56.38 50.71 54.52 50.71Q52.67 50.71 51.28 50Q49.9 49.28 49.13 48.03Q48.36 46.78 48.36 45.15V34.96H50.7V44.96Q50.7 46.01 51.16 46.83Q51.63 47.65 52.49 48.12Q53.35 48.59 54.52 48.59Q55.7 48.59 56.55 48.12Q57.41 47.65 57.87 46.83Q58.34 46.01 58.34 44.96ZM62.15 36.97V34.96H74.15V36.97H69.32V50.46H67V36.97Z"/>
+<path fill="#7C7C79" d="M36.77 73.04H34.28L39.86 57.54H42.56L48.13 73.04H45.65L41.26 60.36H41.14ZM37.18 66.97H45.23V68.93H37.18ZM49.19 73.04V57.54H54.72Q56.53 57.54 57.71 58.16Q58.9 58.78 59.49 59.88Q60.09 60.98 60.09 62.41Q60.09 63.83 59.49 64.91Q58.9 65.98 57.71 66.58Q56.51 67.17 54.71 67.17H50.53V65.17H54.49Q55.64 65.17 56.35 64.84Q57.07 64.52 57.4 63.9Q57.73 63.28 57.73 62.41Q57.73 61.52 57.39 60.88Q57.06 60.24 56.34 59.89Q55.63 59.55 54.47 59.55H51.53V73.04ZM58.01 73.04 54.26 66.04H56.85L60.67 73.04ZM61.79 73.04V57.54H64.12V64.95H64.32L70.82 57.54H73.75L67.51 64.52L73.78 73.04H70.96L65.95 66.12L64.12 68.23V73.04Z"/>
+<path fill="#F0552E" d="M76.37 73.19Q75.74 73.19 75.29 72.75Q74.85 72.31 74.85 71.68Q74.85 71.05 75.29 70.61Q75.74 70.17 76.37 70.17Q77 70.17 77.44 70.61Q77.89 71.05 77.89 71.68Q77.89 72.31 77.44 72.75Q77 73.19 76.37 73.19Z"/>
+</g>
+<g id="previous">
+<circle cx="54" cy="54" r="36" fill="#141414"/>
+<path fill="#F2F2F0" d="M41.64 69H35.83L46.42 39H53.11L63.67 69H57.88L49.87 45.15H49.63ZM41.84 57.23H57.65V61.6H41.84Z"/>
+<path fill="#F0552E" d="M66.17,66a3,3 0,1 1,6 0a3,3 0,1 1,-6 0z"/>
+</g>
+</defs>
+</svg>
+
+<header>
+<div class="wrap">
+<div class="lockup">
+<svg viewBox="18 18 72 72" width="40" height="40" aria-hidden="true"><use href="#icon"/></svg>
+Autark
+</div>
+<span class="label">Launcher icon, Oct 2026</span>
+</div>
+</header>
+
+<main>
+<section>
+<div class="wrap hero">
+<svg viewBox="18 18 72 72" width="400" height="400" role="img" aria-label="The Autark icon: an A in two tones with an orange core where the crossbar was">
+<rect x="18" y="18" width="72" height="72" rx="14.4" fill="#141414"/>
+<use href="#night"/>
+</svg>
+<div class="hero-text">
+<span class="label">The mark</span>
+<h1>A private AI <span>that lives on your phone.</span></h1>
+<p class="lede">It works offline. No account, no cloud, and nothing you type ever leaves this phone.</p>
+<div class="tags"><span>No account</span><span>No cloud</span><span>No tracking</span></div>
+</div>
+</div>
+</section>
+
+<section class="alt">
+<div class="wrap">
+<div class="head">
+<span class="label">01</span>
+<h2>On the phone. <span>Screens from the emulator.</span></h2>
+</div>
+<div class="phones">
+<figure>
+<img src="assets/drawer-light.webp" width="540" height="1200" alt="The Android app drawer: Autark's dark icon first among Google's white ones">
+<figcaption>App drawer</figcaption>
+</figure>
+<figure>
+<img src="assets/splash-dark.webp" width="540" height="1200" alt="Autark's launch screen: the mark alone on night">
+<figcaption>Launch screen</figcaption>
+</figure>
+<figure>
+<img src="assets/chat-dark.webp" width="540" height="1200" alt="Autark's chat screen in dark mode, its headline in the icon's two tones">
+<figcaption>Inside, dark</figcaption>
+</figure>
+<figure>
+<img src="assets/chat-light.webp" width="540" height="1200" alt="Autark's chat screen in light mode">
+<figcaption>Inside, light</figcaption>
+</figure>
+</div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+<div class="head">
+<span class="label">02</span>
+<h2>How it's built. <span>The wordmark's own A.</span></h2>
+</div>
+<div class="grid">
+<figure>
+<svg viewBox="18 18 72 72" width="200" height="200" role="img" aria-label="Step one: Inter Tight SemiBold capital A">
+<circle cx="54" cy="54" r="36" fill="#141414"/>
+<use href="#lambda" fill="#F2F2F0"/>
+<use href="#bar" fill="#F2F2F0"/>
+</svg>
+<figcaption>01<b>Inter Tight SemiBold A</b></figcaption>
+</figure>
+<figure>
+<svg viewBox="18 18 72 72" width="200" height="200" role="img" aria-label="Step two: the crossbar taken out, leaving its outline">
+<circle cx="54" cy="54" r="36" fill="#141414"/>
+<use href="#bar" fill="none" stroke="#7C7C79" stroke-width="0.45" stroke-dasharray="1.1 0.9"/>
+<use href="#lambda" fill="#F2F2F0"/>
+</svg>
+<figcaption>02<b>Crossbar out</b></figcaption>
+</figure>
+<figure>
+<svg viewBox="18 18 72 72" width="200" height="200" role="img" aria-label="Step three: an orange core where the crossbar was">
+<use href="#one-tone"/>
+</svg>
+<figcaption>03<b>Orange core in</b></figcaption>
+</figure>
+<figure>
+<svg viewBox="18 18 72 72" width="200" height="200" role="img" aria-label="Step four: the legs in a headline's two tones">
+<use href="#icon"/>
+</svg>
+<figcaption>04<b>A headline's two tones</b></figcaption>
+</figure>
+</div>
+<div class="swatches">
+<div class="swatch"><i style="background: #141414;"></i><span><b>Night</b>#141414</span></div>
+<div class="swatch"><i style="background: #F2F2F0; box-shadow: inset 0 0 0 1px #D4D4CF;"></i><span><b>Night ink</b>#F2F2F0</span></div>
+<div class="swatch"><i style="background: #7C7C79;"></i><span><b>Night grey</b>#7C7C79</span></div>
+<div class="swatch"><i style="background: #F0552E;"></i><span><b>Orange</b>#F0552E</span></div>
+</div>
+</div>
+</section>
+
+<section>
+<div class="wrap">
+<div class="head">
+<span class="label">03</span>
+<h2>Every size and shape. <span>Whatever the launcher does to it.</span></h2>
+</div>
+<div class="grid">
+<figure>
+<svg viewBox="18 18 72 72" width="140" height="140" role="img" aria-label="Circle mask"><use href="#icon"/></svg>
+<figcaption>Circle</figcaption>
+</figure>
+<figure>
+<svg viewBox="18 18 72 72" width="140" height="140" role="img" aria-label="Squircle mask"><use href="#squircle" fill="#141414"/><use href="#night"/></svg>
+<figcaption>Squircle</figcaption>
+</figure>
+<figure>
+<svg viewBox="18 18 72 72" width="140" height="140" role="img" aria-label="Rounded square mask"><rect x="18" y="18" width="72" height="72" rx="5.76" fill="#141414"/><use href="#night"/></svg>
+<figcaption>Rounded square</figcaption>
+</figure>
+<figure>
+<svg viewBox="18 18 72 72" width="140" height="140" role="img" aria-label="Teardrop mask"><use href="#teardrop" fill="#141414"/><use href="#night"/></svg>
+<figcaption>Teardrop</figcaption>
+</figure>
+<figure>
+<svg viewBox="18 18 72 72" width="140" height="140" role="img" aria-label="Themed icon in light mode">
+<circle cx="54" cy="54" r="36" fill="#D8E2FF"/>
+<use href="#quiet" fill="#0F1C3F" fill-opacity="0.55"/>
+<use href="#lit" fill="#0F1C3F"/>
+<use href="#core" fill="#0F1C3F"/>
+</svg>
+<figcaption>Themed, light</figcaption>
+</figure>
+<figure>
+<svg viewBox="18 18 72 72" width="140" height="140" role="img" aria-label="Themed icon in dark mode">
+<circle cx="54" cy="54" r="36" fill="#303542"/>
+<use href="#quiet" fill="#B3C5F7" fill-opacity="0.55"/>
+<use href="#lit" fill="#B3C5F7"/>
+<use href="#core" fill="#B3C5F7"/>
+</svg>
+<figcaption>Themed, dark</figcaption>
+</figure>
+</div>
+<div class="sizes">
+<figure><svg viewBox="18 18 72 72" width="192" height="192" role="img" aria-label="Icon at 192 pixels"><use href="#icon"/></svg><figcaption>192 px</figcaption></figure>
+<figure><svg viewBox="18 18 72 72" width="128" height="128" role="img" aria-label="Icon at 128 pixels"><use href="#icon"/></svg><figcaption>128 px</figcaption></figure>
+<figure><svg viewBox="18 18 72 72" width="96" height="96" role="img" aria-label="Icon at 96 pixels"><use href="#icon"/></svg><figcaption>96 px</figcaption></figure>
+<figure><svg viewBox="18 18 72 72" width="64" height="64" role="img" aria-label="Icon at 64 pixels"><use href="#icon"/></svg><figcaption>64 px</figcaption></figure>
+<figure><svg viewBox="18 18 72 72" width="48" height="48" role="img" aria-label="Icon at 48 pixels"><use href="#icon"/></svg><figcaption>48 px</figcaption></figure>
+<figure><svg viewBox="18 18 72 72" width="32" height="32" role="img" aria-label="Icon at 32 pixels"><use href="#icon"/></svg><figcaption>32 px</figcaption></figure>
+</div>
+</div>
+</section>
+
+<section class="alt options">
+<div class="wrap">
+<div class="head">
+<span class="label">04</span>
+<h2>Other directions. <span>Tried and set aside.</span></h2>
+</div>
+<div class="grid">
+<figure>
+<svg viewBox="18 18 72 72" width="180" height="180" role="img" aria-label="Paper colourway of the mark">
+<circle cx="54" cy="54" r="35.8" fill="#F5F5F3" stroke="#D4D4CF" stroke-width="0.4"/>
+<use href="#paper"/>
+</svg>
+<div class="small">
+<svg viewBox="18 18 72 72" width="48" height="48" aria-hidden="true"><circle cx="54" cy="54" r="35.4" fill="#F5F5F3" stroke="#D4D4CF" stroke-width="1.2"/><use href="#paper"/></svg>
+<svg viewBox="18 18 72 72" width="32" height="32" aria-hidden="true"><circle cx="54" cy="54" r="35" fill="#F5F5F3" stroke="#D4D4CF" stroke-width="1.8"/><use href="#paper"/></svg>
+</div>
+<figcaption><b>Paper</b>Gets lost among white icons</figcaption>
+</figure>
+<figure>
+<svg viewBox="18 18 72 72" width="180" height="180" role="img" aria-label="One-tone version of the mark"><use href="#one-tone"/></svg>
+<div class="small">
+<svg viewBox="18 18 72 72" width="48" height="48" aria-hidden="true"><use href="#one-tone"/></svg>
+<svg viewBox="18 18 72 72" width="32" height="32" aria-hidden="true"><use href="#one-tone"/></svg>
+</div>
+<figcaption><b>One tone</b>Loses the headline's two tones</figcaption>
+</figure>
+<figure>
+<svg viewBox="18 18 72 72" width="180" height="180" role="img" aria-label="Headline version: AUT over ARK in two tones"><use href="#headline"/></svg>
+<div class="small">
+<svg viewBox="18 18 72 72" width="48" height="48" aria-hidden="true"><use href="#headline"/></svg>
+<svg viewBox="18 18 72 72" width="32" height="32" aria-hidden="true"><use href="#headline"/></svg>
+</div>
+<figcaption><b>Headline</b>Reads as text, not a mark</figcaption>
+</figure>
+<figure>
+<svg viewBox="18 18 72 72" width="180" height="180" role="img" aria-label="The previous icon: A with an orange full stop"><use href="#previous"/></svg>
+<div class="small">
+<svg viewBox="18 18 72 72" width="48" height="48" aria-hidden="true"><use href="#previous"/></svg>
+<svg viewBox="18 18 72 72" width="32" height="32" aria-hidden="true"><use href="#previous"/></svg>
+</div>
+<figcaption><b>Previous</b>An A and an orange full stop</figcaption>
+</figure>
+</div>
+</div>
+</section>
+</main>
+
+<footer>
+<div class="wrap">
+<span class="label">Autark</span>
+<a class="label" href="https://github.com/piyushbodaa/autark/tree/main/design">Source on GitHub</a>
+</div>
+</footer>
+</body>
+</html>
