@@ -4,7 +4,7 @@
 
 ## State
 - 0.1.0 (versionCode 1) live on Play **internal testing** since 5:02 PM IST, 22 Oct.
-- 0.2.0 (versionCode 2) rebuilt with the new icon on 23 Oct (`~/Downloads/Autark-0.2.0.aab` on lappy), **not yet uploaded**. Release notes: "New design. Autark now picks the best model for your phone automatically." It predates the performance pass below.
+- 0.3.0 (versionCode 3) built on 23 Oct (`~/Downloads/Autark-0.3.0.aab` on lappy), **not yet uploaded**: 0.2.0's design and icon, plus the performance pass and the tuning from real phones below. 0.2.0 (versionCode 2) was never uploaded. Release notes: "New design, and Autark picks the best model for your phone. Much faster replies: follow-ups start in about a second, even in long chats, and your chat is prepared while you type. Lighter on memory and tuned to your phone's processor."
 - Play: production access needs a closed test with 12+ testers opted in for 14 days. Closed testing unlocks once Play Console's "Set up your app" tasks are done (none were on 23 Oct).
 - Signing: upload key is kept locally on lappy (`keystore.properties` -> `~/Keys/autark`). It is NOT in this repo, so signed release builds can only be made on lappy.
 
@@ -49,7 +49,7 @@ Measured on 23 Oct with the 2B model (the app's pick on all of them), all checks
 - Loading is the slowest step left (7–10 s): llama.cpp repacks the weights on one thread. Caching the repacked weights on disk would make it near-instant and turn 1.3 GB of the app's own memory into reclaimable file pages, but needs changes inside ggml's CPU backend.
 
 ## Next
-- `~/Downloads/Autark-0.2.0.aab` is the icon-only rebuild from the morning of 23 Oct, without the performance pass. Bump `versionCode` before uploading a build that has it.
+- Upload `~/Downloads/Autark-0.3.0.aab` to internal testing (release notes in State).
 - Next Test Lab round (free quota resets at midnight Pacific, 12:30 IST): a Galaxy S26 (`m1q`) or Z Flip8 (`b8q`) to see whether any has SME and whether `android_armv9.2_2` then beats i8mm; the Galaxy A15 again for its load peak (2.1 GB against 1.6 GB loaded, only on that phone; `engine-memory.txt` now records memory every 50 ms) and to confirm 5 prompt threads in the app.
 - 6 GB phones get the 2B: 7–9 t/s on a Galaxy A15/A35, but Android kills background apps while it is loaded. Worth deciding whether 6 GB phones should get the 0.8B.
 - Upload to internal testing; gather Sir's feedback (screenshots) and iterate.
