@@ -4,5 +4,6 @@
     <color name="paper">#FFF5F5F3</color>
     <color name="night">#FF141414</color>
     <color name="night_ink">#FFF2F2F0</color>
+    <color name="night_grey">#FF7C7C79</color>
     <color name="accent">#FFF0552E</color>
 </resources>

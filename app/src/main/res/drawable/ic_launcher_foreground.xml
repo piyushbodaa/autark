@@ -1,14 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- "A." set in Inter Tight SemiBold, as on piyushbodaa.com; the full stop is the one accent. -->
+<!-- Inter Tight SemiBold's A without its crossbar, split into a headline's two tones; the orange core sits where the crossbar was. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
+        android:fillColor="@color/night_grey"
+        android:pathData="M53.5 30L59.15 30L75.34 76L66.47 76L54.19 39.43L53.5 39.43Z" />
+    <path
         android:fillColor="@color/night_ink"
-        android:pathData="M41.64 69H35.83L46.42 39H53.11L63.67 69H57.88L49.87 45.15H49.63ZM41.84 57.23H57.65V61.6H41.84Z" />
+        android:pathData="M32.66 76L48.89 30L54 30L54 39.43L53.81 39.43L41.56 76Z" />
     <path
         android:fillColor="@color/accent"
-        android:pathData="M66.17,66a3,3 0,1 1,6 0a3,3 0,1 1,-6 0z" />
+        android:pathData="M49.4 61.3a4.6 4.6 0 1 0 9.2 0a4.6 4.6 0 1 0 -9.2 0Z" />
 </vector>
