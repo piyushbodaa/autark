@@ -26,6 +26,9 @@ android {
         versionCode = 2
         versionName = "0.2.0"
 
+        // On-device tests of the engine, for Firebase Test Lab: tools/device-test/run.sh.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
         ndk {
             // 64-bit Arm covers practically every phone that can run a language model;
             // x86_64 covers Chromebooks and the emulator.
@@ -36,7 +39,7 @@ android {
                 arguments += listOf(
                     "-DCMAKE_BUILD_TYPE=Release",
                     "-DBUILD_SHARED_LIBS=ON",
-                    "-DLLAMA_BUILD_COMMON=ON",
+                    "-DLLAMA_BUILD_COMMON=OFF",  // built by our CMakeLists, as a static library
                     "-DLLAMA_BUILD_TESTS=OFF",
                     "-DLLAMA_BUILD_TOOLS=OFF",
                     "-DLLAMA_BUILD_EXAMPLES=OFF",
@@ -92,11 +95,33 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        // Each test in its own process: a process only ever loads one CPU backend variant.
+        execution = "ANDROIDX_TEST_ORCHESTRATOR"
+    }
+
     packaging {
-        // llama.cpp picks its CPU backend at runtime by opening .so files from
-        // nativeLibraryDir, so the libraries must be extracted on install.
-        jniLibs.useLegacyPackaging = true
+        // Native libraries stay uncompressed inside the APK and load from there, rather than
+        // being unpacked into a second copy on install (Engine::init opens the CPU variants
+        // by name for this).
+        jniLibs.useLegacyPackaging = false
+        // CPU backend variants no phone or Chromebook would pick: every Arm core with dotprod
+        // also has FP16, every one with SME also has SVE2, the SVE2 one is slower than i8mm on
+        // phones (Engine::init skips it), and the x86 ones left out are for servers or for chips
+        // too old to run a model. Each would cost about 1.5 MB.
+        jniLibs.excludes += listOf(
+            "android_armv8.2_1", "android_armv9.0_1", "android_armv9.2_1",
+            "sandybridge", "ivybridge", "piledriver", "skylakex", "cannonlake", "cascadelake",
+            "cooperlake", "zen4", "sapphirerapids",
+        ).map { "**/libggml-cpu-$it.so" }
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+    }
+}
+
+// libautark-tests.so runs the on-device tests (src/androidTest); the app itself never loads it.
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.packaging.jniLibs.excludes.add("**/libautark-tests.so")
     }
 }
 
@@ -120,4 +145,7 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.junit)
+    androidTestUtil(libs.androidx.test.orchestrator)
 }

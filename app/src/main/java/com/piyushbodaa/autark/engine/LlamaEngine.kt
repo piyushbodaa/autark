@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.concurrent.Executors
 
 class EngineException(val code: Int, message: String) : Exception(message) {
@@ -29,8 +30,10 @@ private const val ERR_TEMPLATE = -7
 /**
  * Runs one model at a time. llama.cpp contexts are not thread-safe, so every native call
  * goes through a single dedicated thread, and a mutex keeps loads and replies from overlapping.
+ * The conversation in the model's cache is kept in [sessionFile] whenever the model lets go,
+ * so that picking the chat up again doesn't mean reading all of it again.
  */
-class LlamaEngine(private val nativeLibDir: String) {
+class LlamaEngine(private val nativeLibDir: String, private val sessionFile: File) {
 
     sealed interface State {
         data object Empty : State
@@ -57,6 +60,9 @@ class LlamaEngine(private val nativeLibDir: String) {
         val maxTokens: Int,
     )
 
+    /** Threads for generating a reply, and for reading the prompt (which keeps more cores busy). */
+    data class Threads(val generation: Int, val batch: Int)
+
     private val dispatcher = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "llama").apply { isDaemon = true }
     }.asCoroutineDispatcher()
@@ -64,11 +70,14 @@ class LlamaEngine(private val nativeLibDir: String) {
     private var initialized = false
     private var loadedKey: String? = null
 
+    @Volatile
+    private var stopRequested = false
+
     private val _state = MutableStateFlow<State>(State.Empty)
     val state: StateFlow<State> = _state.asStateFlow()
 
     /** Loads the model unless it is already loaded with the same settings. */
-    suspend fun load(modelId: String, path: String, contextSize: Int, threads: Int): Boolean = mutex.withLock {
+    suspend fun load(modelId: String, path: String, contextSize: Int, threads: Threads): Boolean = mutex.withLock {
         withContext(dispatcher) {
             val key = "$modelId|$path|$contextSize|$threads"
             if (key == loadedKey && _state.value is State.Ready) return@withContext true
@@ -76,14 +85,16 @@ class LlamaEngine(private val nativeLibDir: String) {
                 Native.init(nativeLibDir)
                 initialized = true
             }
+            if (loadedKey != null) Native.saveSession(sessionFile.path)  // reloading with new settings
             _state.value = State.Loading(modelId)
-            val allocated = Native.load(path, contextSize, threads)
+            val allocated = Native.load(path, contextSize, threads.generation, threads.batch)
             if (allocated < 0) {
                 loadedKey = null
                 _state.value = State.Failed(modelId, messageFor(allocated))
                 false
             } else {
                 loadedKey = key
+                if (sessionFile.exists() && !Native.loadSession(sessionFile.path)) sessionFile.delete()
                 _state.value = State.Ready(
                     modelId = modelId,
                     description = Native.describe()?.toString(Charsets.UTF_8).orEmpty(),
@@ -101,16 +112,23 @@ class LlamaEngine(private val nativeLibDir: String) {
      * the flow then finishes normally with whatever was generated.
      */
     fun generate(roles: List<String>, contents: List<String>, options: Options): Flow<Event> = flow {
+        stopRequested = false
         mutex.withLock {
+            // Stop may be tapped while a prefill still holds the engine.
+            if (stopRequested) {
+                emit(Event.Finished(0, 0.0))
+                return@withLock
+            }
             val promptTokens = Native.prompt(
-                roles.map { it.toByteArray(Charsets.UTF_8) }.toTypedArray(),
-                contents.map { it.toByteArray(Charsets.UTF_8) }.toTypedArray(),
+                bytes(roles),
+                bytes(contents),
                 options.thinking,
                 options.temperature,
                 options.topP,
                 options.maxTokens,
             )
             if (promptTokens < 0) throw EngineException(promptTokens, messageFor(promptTokens))
+            if (stopRequested) Native.stop()
             emit(Event.Started(promptTokens))
 
             val start = System.nanoTime()
@@ -125,23 +143,57 @@ class LlamaEngine(private val nativeLibDir: String) {
         }
     }.flowOn(dispatcher)
 
-    fun stop() = Native.abort()
+    fun stop() {
+        stopRequested = true
+        Native.stop()
+    }
 
-    /** Frees the model's memory if nothing is running; it reloads on the next message. */
-    suspend fun releaseIfIdle() {
-        if (!mutex.tryLock()) return
-        try {
+    /**
+     * Gets the model through a conversation before the user sends their next message, so that
+     * only that message is left to process. A reply waiting to start simply queues behind it.
+     */
+    suspend fun prefill(roles: List<String>, contents: List<String>, thinking: Boolean, maxTokens: Int) {
+        mutex.withLock {
             withContext(dispatcher) {
-                if (loadedKey != null) {
-                    Native.unload()
-                    loadedKey = null
-                    _state.value = State.Empty
-                }
+                if (_state.value is State.Ready) Native.prefill(bytes(roles), bytes(contents), thinking, maxTokens)
             }
-        } finally {
-            mutex.unlock()
         }
     }
+
+    /** Ends a running [prefill], for when the user moves to another chat. */
+    fun cancelPrefill() = Native.cancelPrefill()
+
+    /** Writes the conversation in the cache to disk, once nothing else is running. */
+    suspend fun saveSession() = mutex.withLock {
+        withContext(dispatcher) {
+            if (loadedKey != null) Native.saveSession(sessionFile.path)
+        }
+    }
+
+    /**
+     * Frees the model's memory once nothing is running, unless [stillWanted] by then. The
+     * conversation is kept on disk; the model reloads on the next message.
+     */
+    suspend fun release(stillWanted: () -> Boolean) = mutex.withLock {
+        withContext(dispatcher) {
+            if (loadedKey != null && !stillWanted()) {
+                Native.saveSession(sessionFile.path)
+                Native.unload()
+                loadedKey = null
+                _state.value = State.Empty
+            }
+        }
+    }
+
+    /** Drops the conversation from the cache and from disk, for when chats are deleted. */
+    suspend fun forget() = mutex.withLock {
+        withContext(dispatcher) {
+            if (loadedKey != null) Native.forget()
+            sessionFile.delete()
+        }
+    }
+
+    private fun bytes(strings: List<String>) = strings.map { it.toByteArray(Charsets.UTF_8) }.toTypedArray()
 
     private fun messageFor(code: Int): String = when (code) {
         ERR_NO_MODEL -> "No model is loaded yet."
@@ -155,10 +207,35 @@ class LlamaEngine(private val nativeLibDir: String) {
     }
 
     companion object {
-        /** Big cores do the work; little cores only slow the others down. */
-        fun defaultThreads(): Int {
-            val cores = Runtime.getRuntime().availableProcessors()
-            return (cores - 2).coerceIn(2, 4)
+        /**
+         * Big cores do the work; little cores only slow the others down, because every step
+         * waits for the slowest thread. The kernel rates each core's capacity (1024 for the
+         * fastest), which tells big from little better than clock speed does.
+         *
+         * Measured on phones in Firebase Test Lab (tools/device-test), with the 2B model:
+         * generation is bound by memory bandwidth, so it peaks at one thread fewer than there are
+         * big cores, and at four at most (a Galaxy A35 makes 9.2 tokens/s on 2 threads and 8.6 on
+         * 4). Reading a prompt is arithmetic and peaks at five. Past those, the threads keep
+         * waiting on each other and on the rest of the phone: on all 7 of its cores, a Pixel 11
+         * reads prompts 43% slower than on 5, and generates 1.8 tokens/s against 22 on 4. With
+         * only two big cores, as in most budget phones, three little ones are worth adding for
+         * prompts: a Galaxy A15 reads them 27% faster on 5 threads than on its 2 big cores.
+         */
+        fun defaultThreads(): Threads {
+            val capacities = File("/sys/devices/system/cpu").listFiles { f -> f.name.matches(Regex("cpu\\d+")) }
+                .orEmpty()
+                .mapNotNull { runCatching { File(it, "cpu_capacity").readText().trim().toInt() }.getOrNull() }
+            val cores = capacities.size.takeIf { it > 0 } ?: Runtime.getRuntime().availableProcessors()
+            val big = if (capacities.isNotEmpty()) {
+                val fastest = capacities.max()
+                capacities.count { it * 2 >= fastest }
+            } else {
+                cores - 2
+            }
+            return Threads(
+                generation = (big - 1).coerceIn(2, 4),
+                batch = (if (big <= 2) cores - 3 else big).coerceIn(2, 5),
+            )
         }
     }
 }

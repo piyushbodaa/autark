@@ -26,9 +26,13 @@ class AutarkApplication : Application() {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        // In the background the model is the first thing Android would kill us for.
-        if (level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND) {
-            container.scope.launch { container.engine.releaseIfIdle() }
+        when {
+            // In the background the model is the first thing Android would kill us for.
+            level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND ->
+                container.scope.launch { container.engine.release(stillWanted = { container.visible }) }
+            // Just left: Android may stop the app at any moment now, so keep the chat on disk.
+            level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN ->
+                container.scope.launch { container.engine.saveSession() }
         }
     }
 }
@@ -36,7 +40,11 @@ class AutarkApplication : Application() {
 class AppContainer(app: Application) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settings = SettingsStore(app)
-    val engine = LlamaEngine(app.applicationInfo.nativeLibraryDir)
+    val engine = LlamaEngine(app.applicationInfo.nativeLibraryDir, File(app.cacheDir, "session.bin"))
+
+    /** Whether the app is on screen; MainActivity keeps it up to date. */
+    @Volatile
+    var visible = false
     val chats = ChatStore(File(app.filesDir, "chats"))
 
     /** Marketing RAM size (8 GB), not the slightly smaller figure Android reports. */

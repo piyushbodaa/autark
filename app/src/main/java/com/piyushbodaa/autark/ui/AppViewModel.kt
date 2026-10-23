@@ -44,6 +44,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
     private var replyJob: Job? = null
+    private var prefillJob: Job? = null
+    private var prefilledFor: Pair<String, Int>? = null  // conversation id and message count
 
     init {
         viewModelScope.launch { c.chats.load() }
@@ -109,16 +111,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     _notice.value = (engineState.value as? LlamaEngine.State.Failed)?.message ?: "Couldn't start the model."
                     return@launch
                 }
-                val roles = mutableListOf<String>()
-                val contents = mutableListOf<String>()
-                if (s.systemPrompt.isNotBlank()) {
-                    roles += "system"
-                    contents += s.systemPrompt
-                }
-                conversation.messages.forEach {
-                    roles += it.role
-                    contents += if (it.isUser) it.text else Thinking.split(it.text).answer
-                }
+                val (roles, contents) = transcript(conversation, s)
                 val options = LlamaEngine.Options(
                     thinking = s.thinking,
                     temperature = s.temperature,
@@ -157,6 +150,47 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** What the model sees: the system prompt, then each message, with earlier reasoning left out. */
+    private fun transcript(conversation: Conversation, s: Settings): Pair<List<String>, List<String>> {
+        val roles = mutableListOf<String>()
+        val contents = mutableListOf<String>()
+        if (s.systemPrompt.isNotBlank()) {
+            roles += "system"
+            contents += s.systemPrompt
+        }
+        conversation.messages.forEach {
+            roles += it.role
+            contents += if (it.isUser) it.text else Thinking.split(it.text).answer
+        }
+        return roles to contents
+    }
+
+    /**
+     * The user started typing, so a message is on its way: get the model through the chat so far
+     * (and loaded, if Android made it let go) in the meantime, leaving only that message to process.
+     */
+    fun onTyping() {
+        val conversation = _current.value
+        val key = conversation.id to conversation.messages.size
+        if (_generating.value || prefilledFor == key || modelStatus.value != ModelManager.Status.Ready) return
+        prefilledFor = key
+        prefillJob?.cancel()
+        prefillJob = viewModelScope.launch {
+            val s = settings.value
+            if (c.engine.load(model.id, c.models.file.path, s.contextSize, threadsFor(s))) {
+                val (roles, contents) = transcript(conversation, s)
+                c.engine.prefill(roles, contents, s.thinking, s.maxTokens)
+            }
+        }
+    }
+
+    private fun cancelPrefill() {
+        prefillJob?.cancel()
+        prefillJob = null
+        prefilledFor = null
+        c.engine.cancelPrefill()
+    }
+
     private fun updateReply(change: (Message) -> Message) = _current.update { conversation ->
         val last = conversation.messages.lastOrNull() ?: return@update conversation
         if (last.isUser) conversation else conversation.copy(messages = conversation.messages.dropLast(1) + change(last))
@@ -170,15 +204,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteChat(id: String) = afterStopping {
         c.chats.delete(id)
+        c.engine.forget()  // the model's cache may hold this chat
         if (_current.value.id == id) _current.value = Conversation()
     }
 
     fun deleteAllChats() = afterStopping {
         c.chats.deleteAll()
+        c.engine.forget()
         _current.value = Conversation()
     }
 
     private fun afterStopping(action: suspend () -> Unit) {
+        cancelPrefill()
         viewModelScope.launch {
             if (_generating.value) {
                 c.engine.stop()
@@ -196,7 +233,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun updateSettings(change: (Settings) -> Settings) = c.settings.update(change)
 
-    private fun threadsFor(s: Settings) = if (s.threads > 0) s.threads else LlamaEngine.defaultThreads()
+    private fun threadsFor(s: Settings) =
+        if (s.threads > 0) LlamaEngine.Threads(s.threads, s.threads) else LlamaEngine.defaultThreads()
 
     private fun titleFrom(text: String): String {
         val line = text.lineSequence().first().trim()

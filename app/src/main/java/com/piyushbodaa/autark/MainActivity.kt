@@ -17,4 +17,14 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onStart() {
+        super.onStart()
+        (application as AutarkApplication).container.visible = true
+    }
+
+    override fun onStop() {
+        super.onStop()
+        (application as AutarkApplication).container.visible = false
+    }
 }

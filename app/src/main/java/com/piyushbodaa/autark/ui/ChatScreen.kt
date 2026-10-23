@@ -104,7 +104,7 @@ fun ChatScreen(vm: AppViewModel, onOpenDrawer: () -> Unit) {
                     Messages(messages = conversation.messages, generating = generating, onRegenerate = vm::regenerate)
                 }
             }
-            Composer(generating = generating, onSend = vm::send, onStop = vm::stop)
+            Composer(generating = generating, onSend = vm::send, onStop = vm::stop, onTyping = vm::onTyping)
         }
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(bottom = 88.dp))
     }
@@ -322,7 +322,7 @@ private fun TypingIndicator() {
 
 /** A pill-shaped field with a solid round button, like the dock on piyushbodaa.com. */
 @Composable
-private fun Composer(generating: Boolean, onSend: (String) -> Unit, onStop: () -> Unit) {
+private fun Composer(generating: Boolean, onSend: (String) -> Unit, onStop: () -> Unit, onTyping: () -> Unit) {
     val p = LocalPalette.current
     var text by rememberSaveable { mutableStateOf("") }
     val canSend = text.isNotBlank() && !generating
@@ -344,7 +344,10 @@ private fun Composer(generating: Boolean, onSend: (String) -> Unit, onStop: () -
             if (text.isEmpty()) Text("Message", style = Type.body, color = p.grey)
             BasicTextField(
                 value = text,
-                onValueChange = { text = it },
+                onValueChange = {
+                    text = it
+                    if (it.isNotBlank()) onTyping()
+                },
                 textStyle = Type.body.copy(color = p.ink),
                 cursorBrush = SolidColor(p.ink),
                 maxLines = 6,
