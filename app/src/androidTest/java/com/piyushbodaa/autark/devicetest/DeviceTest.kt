@@ -9,7 +9,6 @@ import android.system.OsConstants
 import android.util.Log
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.piyushbodaa.autark.AutarkApplication
 import com.piyushbodaa.autark.engine.LlamaEngine
 import com.piyushbodaa.autark.models.Catalog
 import com.piyushbodaa.autark.models.CatalogModel
@@ -44,8 +43,7 @@ private const val MIB = 1024 * 1024L
  * (Android Test Orchestrator), because a process only ever loads one CPU backend variant.
  *
  * Results go to logcat (tag AutarkDeviceTest) and to device-test/ in the app's external files
- * directory, which run.sh downloads. The model is the one the app would pick for the phone,
- * unless the instrumentation argument `model` is "standard" or "compact".
+ * directory, which run.sh downloads. The model is the app's.
  */
 @RunWith(AndroidJUnit4::class)
 @FixMethodOrder(MethodSorters.NAME_ASCENDING)
@@ -54,16 +52,11 @@ class DeviceTest {
     val testName = TestName()
 
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
-    private val app = context.applicationContext as AutarkApplication
     private val out = File(context.getExternalFilesDir(null), "device-test").apply { mkdirs() }
     private val threads = LlamaEngine.defaultThreads()
     private var started = 0L
 
-    private val model: CatalogModel = when (InstrumentationRegistry.getArguments().getString("model")) {
-        "standard" -> Catalog.standard
-        "compact" -> Catalog.compact
-        else -> Catalog.forPhone(app.container.ramGb)
-    }
+    private val model: CatalogModel = Catalog.model
 
     // The order Engine::init tries them in (CPU_VARIANTS in engine.cpp): the first that loads wins.
     private val variants = if (Build.SUPPORTED_ABIS.first() == "arm64-v8a") {
@@ -95,7 +88,6 @@ class DeviceTest {
     fun a_device() {
         val memory = ActivityManager.MemoryInfo()
         context.getSystemService(ActivityManager::class.java).getMemoryInfo(memory)
-        val ramGb = app.container.ramGb
         report("device", buildString {
             appendLine(
                 "${Build.MANUFACTURER} ${Build.MODEL} (${Build.DEVICE}), Android ${Build.VERSION.RELEASE} " +
@@ -103,10 +95,7 @@ class DeviceTest {
             )
             if (Build.VERSION.SDK_INT >= 31) appendLine("SoC: ${Build.SOC_MANUFACTURER} ${Build.SOC_MODEL}")
             appendLine("ABIs: ${Build.SUPPORTED_ABIS.joinToString()}; page size ${Os.sysconf(OsConstants._SC_PAGESIZE) / 1024} KB")
-            appendLine(
-                "Memory: ${memory.totalMem / MIB} MiB, ${memory.availMem / MIB} MiB available; " +
-                    "the app counts $ramGb GB and picks ${Catalog.forPhone(ramGb).name}; testing ${model.name}",
-            )
+            appendLine("Memory: ${memory.totalMem / MIB} MiB, ${memory.availMem / MIB} MiB available; testing ${model.name}")
             appendLine("Cores (capacity, max MHz): ${cores()}")
             appendLine("Threads the app uses: ${threads.generation} to generate, ${threads.batch} for prompts")
             appendLine("CPU variants (score): " + variants.joinToString { "$it ${DeviceTools.score(it)}" })
@@ -226,7 +215,7 @@ class DeviceTest {
         return file
     }
 
-    // Straight from Hugging Face, checked against the same SHA-256 the app uses. Connections
+    // Straight from Hugging Face, checked against the catalog's SHA-256. Connections
     // there stall now and then, so it picks up where it stopped.
     private fun download(model: CatalogModel, file: File) {
         val partial = File(file.path + ".part")

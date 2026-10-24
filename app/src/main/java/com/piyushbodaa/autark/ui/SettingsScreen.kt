@@ -153,10 +153,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
 
             Section("About") {
                 Text("Autark ${BuildConfig.VERSION_NAME}", style = Type.body, color = p.ink)
-                Fine(
-                    "Runs ${vm.model.name} (${vm.model.license}), picked for this phone's ${vm.ramGb} GB of memory, " +
-                        "with llama.cpp (MIT).",
-                )
+                Fine("Runs ${vm.model.name} (${vm.model.license}) with llama.cpp (MIT).")
                 (engine as? LlamaEngine.State.Ready)?.let { Fine("${it.description} · ${it.contextSize} tokens of memory") }
                 Row {
                     NavText("Model license", onClick = { openUrl(context, vm.model.licenseUrl) })

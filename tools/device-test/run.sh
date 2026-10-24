@@ -11,14 +11,11 @@
 #
 #   gcloud firebase test android models list --filter=form=PHYSICAL
 #
-# Test Lab's phones download slowly, so put the two models in a Cloud Storage folder once and
-# name it in MODELS: they are then copied onto each phone before the tests start.
+# Test Lab's phones download slowly, so put the model in a Cloud Storage folder once and name
+# it in MODELS: it is then copied onto each phone before the tests start.
 #
-#   gcloud storage cp ~/models/Qwen3.5-*-Q4_K_M.gguf gs://BUCKET/models/
+#   gcloud storage cp ~/models/Qwen3.5-2B-Q4_K_M.gguf gs://BUCKET/models/
 #   MODELS=gs://BUCKET/models tools/device-test/run.sh ...
-#
-# The model is the one the app would pick for each phone; add `-- --environment-variables
-# model=compact` (or standard) to choose.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -28,16 +25,13 @@ while [ $# -gt 0 ] && [ "$1" != "--" ]; do
     shift
 done
 [ $# -gt 0 ] && shift
-[ ${#devices[@]} -gt 0 ] || { sed -n '2,22p' "$0"; exit 1; }
+[ ${#devices[@]} -gt 0 ] || { sed -n '2,18p' "$0"; exit 1; }
 
 files=/sdcard/Android/data/com.piyushbodaa.autark.debug/files
 models=()
 if [ -n "${MODELS:-}" ]; then
-    push=""
-    for model in Qwen3.5-2B-Q4_K_M.gguf Qwen3.5-0.8B-Q4_K_M.gguf; do
-        push+="${push:+,}$files/test-models/$model=${MODELS%/}/$model"
-    done
-    models=(--other-files "$push")
+    model=Qwen3.5-2B-Q4_K_M.gguf
+    models=(--other-files "$files/test-models/$model=${MODELS%/}/$model")
 fi
 
 ./gradlew -q assembleDebug assembleDebugAndroidTest

@@ -1,6 +1,5 @@
 package com.piyushbodaa.autark
 
-import android.app.ActivityManager
 import android.app.Application
 import android.content.ComponentCallbacks2
 import com.piyushbodaa.autark.data.ChatStore
@@ -13,7 +12,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.File
-import kotlin.math.ceil
 
 class AutarkApplication : Application() {
     lateinit var container: AppContainer
@@ -46,13 +44,5 @@ class AppContainer(app: Application) {
     @Volatile
     var visible = false
     val chats = ChatStore(File(app.filesDir, "chats"))
-
-    /** Marketing RAM size (8 GB), not the slightly smaller figure Android reports. */
-    val ramGb: Int = run {
-        val info = ActivityManager.MemoryInfo()
-        app.getSystemService(ActivityManager::class.java).getMemoryInfo(info)
-        ceil(info.totalMem / (1024.0 * 1024 * 1024)).toInt()
-    }
-
-    val models = ModelManager(app, scope, Catalog.forPhone(ramGb))
+    val models = ModelManager(app, scope, Catalog.model)
 }

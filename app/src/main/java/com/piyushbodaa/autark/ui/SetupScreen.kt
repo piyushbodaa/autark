@@ -106,17 +106,6 @@ private fun Progress(model: CatalogModel, status: Status, onDownload: () -> Unit
             Spacer(Modifier.height(8.dp))
             NavText("Cancel", onClick = onCancel)
         }
-        Status.Verifying -> {
-            LinearProgressIndicator(
-                color = p.ink,
-                trackColor = p.pill,
-                strokeCap = StrokeCap.Round,
-                gapSize = 0.dp,
-                modifier = Modifier.widthIn(max = 260.dp).fillMaxWidth(),
-            )
-            Spacer(Modifier.height(12.dp))
-            Fine("Checking the file", upper = true)
-        }
         is Status.Failed -> {
             Fine(status.message, align = TextAlign.Center)
             Spacer(Modifier.height(16.dp))

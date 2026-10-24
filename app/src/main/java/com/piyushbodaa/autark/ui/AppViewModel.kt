@@ -32,7 +32,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val conversations: StateFlow<List<Conversation>> = c.chats.conversations
     val model: CatalogModel = c.models.model
     val modelStatus: StateFlow<ModelManager.Status> = c.models.status
-    val ramGb: Int = c.ramGb
 
     private val _current = MutableStateFlow(Conversation())
     val current: StateFlow<Conversation> = _current.asStateFlow()

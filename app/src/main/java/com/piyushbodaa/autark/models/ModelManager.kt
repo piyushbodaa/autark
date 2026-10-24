@@ -13,19 +13,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
-import java.security.MessageDigest
 
 /**
- * Gets the phone's one model onto it: downloads with the system DownloadManager (it survives
- * the app being closed, resumes after network drops and shows its own progress notification),
- * then checks the file against its SHA-256 before it is ever loaded.
+ * Gets the model onto the phone with the system DownloadManager: it survives the app being
+ * closed, resumes after network drops and shows its own progress notification. The model is
+ * ready the moment the download is.
  */
 class ModelManager(private val context: Context, private val scope: CoroutineScope, val model: CatalogModel) {
 
     sealed interface Status {
         data object Absent : Status
         data class Downloading(val downloaded: Long, val total: Long, val waiting: Boolean) : Status
-        data object Verifying : Status
         data object Ready : Status
         data class Failed(val message: String) : Status
     }
@@ -47,9 +45,7 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
                 _status.value = Status.Downloading(0, model.sizeBytes, waiting = false)
                 startPolling()
             }
-            isVerified() -> _status.value = Status.Ready
-            // Fully downloaded, but the app closed before the checksum finished.
-            file.length() == model.sizeBytes -> verify()
+            isDownloaded() -> _status.value = Status.Ready
         }
     }
 
@@ -64,7 +60,7 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
         val id = downloads.enqueue(request)
         prefs.edit {
             putLong(DOWNLOAD_KEY + model.id, id)
-            remove(VERIFIED_KEY + model.fileName)
+            remove(DONE_KEY + model.fileName)
         }
         _status.value = Status.Downloading(0, model.sizeBytes, waiting = false)
         startPolling()
@@ -115,8 +111,18 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
                 .takeIf { it > 0 } ?: model.sizeBytes
             when (state) {
                 DownloadManager.STATUS_SUCCESSFUL -> {
-                    prefs.edit { remove(DOWNLOAD_KEY + model.id) }
-                    verify()
+                    // Anything else (say, a Wi-Fi sign-in page served in its place) is the wrong size.
+                    val whole = file.length() == model.sizeBytes
+                    prefs.edit {
+                        remove(DOWNLOAD_KEY + model.id)
+                        if (whole) putBoolean(DONE_KEY + model.fileName, true)
+                    }
+                    if (whole) {
+                        _status.value = Status.Ready
+                    } else {
+                        file.delete()
+                        _status.value = Status.Failed("The download was incomplete. Please try again.")
+                    }
                 }
                 DownloadManager.STATUS_FAILED -> {
                     val reason = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
@@ -130,21 +136,9 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
         }
     }
 
-    private fun verify() {
-        _status.value = Status.Verifying
-        scope.launch(Dispatchers.IO) {
-            if (file.length() == model.sizeBytes && sha256(file) == model.sha256) {
-                prefs.edit { putBoolean(VERIFIED_KEY + model.fileName, true) }
-                _status.value = Status.Ready
-            } else {
-                file.delete()
-                _status.value = Status.Failed("The download was incomplete or damaged. Please try again.")
-            }
-        }
-    }
-
-    private fun isVerified() =
-        prefs.getBoolean(VERIFIED_KEY + model.fileName, false) && file.length() == model.sizeBytes
+    // DownloadManager sets aside the whole file as soon as it starts, so the size alone says nothing.
+    private fun isDownloaded() =
+        prefs.getBoolean(DONE_KEY + model.fileName, false) && file.length() == model.sizeBytes
 
     private fun downloadId() = prefs.getLong(DOWNLOAD_KEY + model.id, -1)
 
@@ -155,21 +149,10 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
         else -> "The download failed. Please try again."
     }
 
-    private fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(1 shl 20)
-            while (true) {
-                val n = input.read(buffer)
-                if (n < 0) break
-                digest.update(buffer, 0, n)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
-
     companion object {
         private const val DOWNLOAD_KEY = "download:"
-        private const val VERIFIED_KEY = "verified:"
+
+        /** Set when a download finishes. Earlier versions set it once the file's SHA-256 matched. */
+        private const val DONE_KEY = "verified:"
     }
 }
