@@ -3,15 +3,20 @@
 **What:** Android app (package `com.piyushbodaa.autark`) to chat with small AI models fully offline. Kotlin + Jetpack Compose UI, llama.cpp via JNI (`app/src/main/cpp`, submodule `third_party/llama.cpp`).
 
 ## State
-- 0.1.0 (versionCode 1) live on Play **internal testing** since 5:02 PM IST, 22 Oct.
-- 0.3.0 (versionCode 3) built on 23 Oct (`~/Downloads/Autark-0.3.0.aab` on lappy), **not yet uploaded**: 0.2.0's design and icon, plus the performance pass and the tuning from real phones below. 0.2.0 (versionCode 2) was never uploaded. Release notes: "New design, and Autark picks the best model for your phone. Much faster replies: follow-ups start in about a second, even in long chats, and your chat is prepared while you type. Lighter on memory and tuned to your phone's processor."
+- 0.4.0 (versionCode 4) is built and signed (`~/Downloads/Autark-0.4.0.aab`, 23 Oct, 7:46 PM IST) but not uploaded yet: one model, Qwen 3.5 2B, for every phone, and the chat opens as soon as the download finishes (see the decisions below). Proposed release notes: "Autark now runs the same model, Qwen 3.5 2B, on every phone, and the chat opens as soon as the download finishes." The bundle predates the font and drawer fixes below.
+- Store listing (23 Oct, not submitted): six 1080×1920 phone screenshots in `design/store/screenshots/` (24-bit PNG, in upload order), a draft name and descriptions in `design/store/listing.md`, the feature graphic in `design/store/` and the 512 px icon in `design/icon/`. The screenshots come from the emulator with `-skin 1080x1920 -qemu -cpu host`, airplane mode on and the status bar in demo mode; every reply in them is real model output.
+- 0.3.0 (versionCode 3) live on Play **internal testing** since 4:09 PM IST, 23 Oct: 0.2.0's design, the new icon, and the performance pass and tuning from real phones below. Release notes: "New design, and Autark picks the best model for your phone. Much faster replies: follow-ups start in about a second, even in long chats, and your chat is prepared while you type. Lighter on memory and tuned to your phone's processor." A new install downloads 6.9 MB (0.2.0: 9.6 MB).
+- Before it, on 22 Oct: 0.1.0 (versionCode 1) at 5:02 PM IST, and 0.2.0 (versionCode 2) at 6:14 PM IST, uploaded before the icon was redrawn ("New design. Autark now picks the best model for your phone automatically.").
+- Internal testing goes to two email lists: "Me" (the developer) and "Testers" (7 friends, added 23 Oct). Testers join through the opt-in link on the Testers tab, opened in a browser: on a phone, pasted into Chrome's address bar. Tapped in the Gmail app, it goes straight to the Play Store app, which skips "Accept invite", and installing fails with "Something went wrong on our end" (a tester, 23 Oct; pasting it into Chrome fixed it). Until the app is set up and reviewed, they see it as "com.piyushbodaa.autark (unreviewed)".
+- Play's Automatic protection is on (since 0.2.0 at least): Play adds an installer check to the app it delivers, and with it the `com.android.vending.CHECK_LICENSE` permission, which isn't in the manifest.
 - Play: production access needs a closed test with 12+ testers opted in for 14 days. Closed testing unlocks once Play Console's "Set up your app" tasks are done (none were on 23 Oct).
 - Signing: upload key is kept locally on lappy (`keystore.properties` -> `~/Keys/autark`). It is NOT in this repo, so signed release builds can only be made on lappy.
 
-## Recent decisions (0.2.0)
+## Recent decisions (0.2.0 to 0.4.0)
 - Redesign to match piyushbodaa.com: Inter Tight font, paper/ink/grey palette, uppercase two-tone headlines, night setup screen + drawer, rounded composer.
 - New icon (23 Oct): Inter Tight's A with an orange core where the crossbar was, legs in a headline's two tones, on night. Source, tools and design board in `design/`.
-- No model picker: Qwen 3.5 2B on 6 GB+ RAM devices, Qwen 3.5 0.8B otherwise; single "Download · 1.3 GB" first-run button. Models screen and GGUF import removed; upgrading from 0.1.0 deletes other models.
+- One model for every phone: Qwen 3.5 2B (the developer's call on 23 Oct, for 0.4.0; until 0.3.0, phones under 6 GB got Qwen 3.5 0.8B). No model picker and no memory check; a single "Download · 1.3 GB" first-run button, and the chat opens as soon as DownloadManager reports the download finished. The SHA-256 pass after it ("Checking the file") is gone too: the app records the finished download and checks the size. Size alone can't tell, because DownloadManager sets aside the whole file when it starts. Models screen and GGUF import removed; upgrading deletes other models, so phones that had the 0.8B download the 2B.
+- Font weights (23 Oct, after the 0.4.0 bundle): Inter Tight's three weights are instances of one variable font, and `Font(res, weight)` doesn't set its wght axis, so every text had been drawn at Regular and Markdown bold didn't show. `Theme.kt` now sets the axis. The chat drawer, always night, now also gets light status-bar icons (the clock was dark on dark).
 
 ## Performance pass (23 Oct)
 Measured with `tools/engine-test` on a laptop CPU (4 threads) and checked on the emulator:
@@ -30,7 +35,7 @@ Measured with `tools/engine-test` on a laptop CPU (4 threads) and checked on the
 ## Device tests (23 Oct)
 No phone was at hand, so the engine is measured on phones in Firebase Test Lab: project `autark-device-tests` on the developer's Google account, on the free Spark plan (5 physical and 10 virtual device runs a day, no billing). The Google Cloud CLI is at `~/.local/share/google-cloud-sdk` on lappy, signed in to that account.
 - `app/src/androidTest/.../devicetest/DeviceTest.kt` (debug builds only, through `libautark-tests.so`): device facts, every CPU variant the phone can run, every thread count (llama-bench), `tools/engine-test`, and the app's own `LlamaEngine`.
-- `tools/device-test/run.sh DEVICE,version=API ...` runs it and downloads the results to `build/device-test/`; `tools/device-test/summarize.py` prints one summary per phone. Test Lab phones download slowly (3–13 MB/s, and two stalled), so both models are in `gs://test-lab-4tqmpm9aky7bi-mm34972k40iax/models/` and `MODELS=gs://test-lab-4tqmpm9aky7bi-mm34972k40iax/models` has run.sh copy them onto each phone first.
+- `tools/device-test/run.sh DEVICE,version=API ...` runs it and downloads the results to `build/device-test/`; `tools/device-test/summarize.py` prints one summary per phone. Test Lab phones download slowly (3–13 MB/s, and two stalled), so the model is in `gs://test-lab-4tqmpm9aky7bi-mm34972k40iax/models/` and `MODELS=gs://test-lab-4tqmpm9aky7bi-mm34972k40iax/models` has run.sh copy it onto each phone first.
 - Phones throttle within a minute or two, so a fixed test order measures heat as much as speed: the CPU variants now run there and back (ABBA) and the thread counts in three rounds of different orders.
 - The free `MediumPhone.arm` and `MediumPhone_ps16k.arm` (16 KB pages) virtual devices run the whole suite in ~3 minutes: check changes there before spending physical runs.
 
@@ -49,13 +54,14 @@ Measured on 23 Oct with the 2B model (the app's pick on all of them), all checks
 - Loading is the slowest step left (7–10 s): llama.cpp repacks the weights on one thread. Caching the repacked weights on disk would make it near-instant and turn 1.3 GB of the app's own memory into reclaimable file pages, but needs changes inside ggml's CPU backend.
 
 ## Next
-- Upload `~/Downloads/Autark-0.3.0.aab` to internal testing (release notes in State).
 - Next Test Lab round (free quota resets at midnight Pacific, 12:30 IST): a Galaxy S26 (`m1q`) or Z Flip8 (`b8q`) to see whether any has SME and whether `android_armv9.2_2` then beats i8mm; the Galaxy A15 again for its load peak (2.1 GB against 1.6 GB loaded, only on that phone; `engine-memory.txt` now records memory every 50 ms) and to confirm 5 prompt threads in the app.
-- 6 GB phones get the 2B: 7–9 t/s on a Galaxy A15/A35, but Android kills background apps while it is loaded. Worth deciding whether 6 GB phones should get the 0.8B.
-- Upload to internal testing; gather Sir's feedback (screenshots) and iterate.
+- Every phone gets the 2B now (1.6–1.7 GB resident). 6 GB phones run it at 7–9 t/s (Galaxy A15/A35) while Android kills background apps; phones with 3–4 GB are untested and may not be able to load it. If they can't, Play Console's device catalog can exclude phones by RAM.
+- Suggestion pills: on the emulator (23 Oct), "Explain UPI" got the facts wrong both times (a UPI ID as "a 10-digit number", a password like 123456 instead of the UPI PIN), "Home workout" muddled its steps, and the Hindi story didn't make sense. Hindi replies in general had grammar and sense errors. Prompts that came out well: name ideas for a home bakery, photosynthesis for a 10-year-old, a birthday message for mom.
+- Gather Sir's and the testers' feedback (screenshots) and iterate. Anyone else trying builds must first be added to an internal-testing email list.
 - Finish Play's setup tasks and start a closed test with 12+ testers. Keep testers' email addresses out of this repo: it's public.
+- Play's bundle report: R8 runs in full mode with resource shrinking, but optimized resource shrinking and class repackaging are off, and it suggests AGP 9 (we're on 8.13.2). DEX is 2.2 MB uncompressed, so these are small size wins.
 
 ## Release flow
 1. Bump `versionCode` and `versionName` in `app/build.gradle.kts`.
 2. On lappy: `./gradlew bundleRelease` (needs `keystore.properties`), copy aab to `~/Downloads/Autark-<ver>.aab`.
-3. Upload to Play Console > Internal testing > Create release, name = version, notes en-US, Save and publish. Internal testing only.
+3. Upload to Play Console > Internal testing > Create release, name = version, notes en-US, Save and publish. Internal testing only. Claude in Chrome can't attach files over 10 MB (the bundle is ~27 MB), so this step is done by hand or by an agent that can upload it.

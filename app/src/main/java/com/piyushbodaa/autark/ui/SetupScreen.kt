@@ -115,9 +115,9 @@ private fun Progress(model: CatalogModel, status: Status, onDownload: () -> Unit
     }
 }
 
-/** The night screen needs light status-bar icons even when the phone is in light mode. */
+/** Night screens (this one and the chat drawer) need light status-bar icons even when the phone is in light mode. */
 @Composable
-private fun LightStatusBarIcons() {
+fun LightStatusBarIcons() {
     val view = LocalView.current
     DisposableEffect(view) {
         val window = (view.context as? Activity)?.window

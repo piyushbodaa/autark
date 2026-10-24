@@ -10,9 +10,11 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
@@ -67,10 +69,16 @@ val LocalPalette = staticCompositionLocalOf { Day }
 
 /** One variable font file; each weight is an instance of its wght axis. */
 val InterTight = FontFamily(
-    Font(R.font.inter_tight, FontWeight.Normal),
-    Font(R.font.inter_tight, FontWeight.Medium),
-    Font(R.font.inter_tight, FontWeight.SemiBold),
+    interTight(FontWeight.Normal),
+    interTight(FontWeight.Medium),
+    interTight(FontWeight.SemiBold),
 )
+
+// The weight alone only picks this entry; without the axis setting, every entry draws the file's
+// default instance (Regular).
+@OptIn(ExperimentalTextApi::class)
+private fun interTight(weight: FontWeight) =
+    Font(R.font.inter_tight, weight, variationSettings = FontVariation.Settings(FontVariation.weight(weight.weight)))
 
 object Type {
     val body = TextStyle(fontFamily = InterTight, fontWeight = FontWeight.Medium, fontSize = 16.sp, lineHeight = 23.sp, letterSpacing = (-0.005).em)

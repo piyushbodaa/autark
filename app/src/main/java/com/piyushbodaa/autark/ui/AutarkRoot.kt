@@ -68,6 +68,7 @@ private fun ChatWithDrawer(vm: AppViewModel, onOpenSettings: () -> Unit) {
     var confirmDelete by remember { mutableStateOf<Conversation?>(null) }
 
     BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
+    if (drawer.targetValue == DrawerValue.Open) LightStatusBarIcons()
 
     ModalNavigationDrawer(
         drawerState = drawer,
