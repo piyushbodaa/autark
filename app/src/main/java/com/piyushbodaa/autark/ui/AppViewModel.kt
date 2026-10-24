@@ -39,6 +39,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val _generating = MutableStateFlow(false)
     val generating: StateFlow<Boolean> = _generating.asStateFlow()
 
+    /** A reply is waiting for the model to load or to read the chat, before its first word. */
+    private val _reading = MutableStateFlow(false)
+    val reading: StateFlow<Boolean> = _reading.asStateFlow()
+
+    /** Text shared from another app, waiting for the user to say what to do with it. */
+    private val _shared = MutableStateFlow<Shared?>(null)
+    val shared: StateFlow<Shared?> = _shared.asStateFlow()
+
+    data class Shared(val text: String, val shortened: Boolean)
+
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
@@ -67,6 +77,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun cancelDownload() = c.models.cancel()
 
+    // ---- the app on screen ----
+
+    /**
+     * Back on screen. If Android took the model's memory while the app was away, load it again now
+     * instead of at the first keystroke, so a quick message doesn't wait for all of the load.
+     */
+    fun onAppVisible() {
+        if (modelStatus.value != ModelManager.Status.Ready || engineState.value != LlamaEngine.State.Empty) return
+        viewModelScope.launch {
+            val s = settings.value
+            c.engine.load(model.id, c.models.file.path, s.contextSize, threadsFor(s))
+        }
+    }
+
+    /** Off screen, where Android may stop the app at any moment: keep a reply that's still coming in. */
+    fun onAppHidden() {
+        if (_generating.value) viewModelScope.launch { c.chats.save(_current.value) }
+    }
+
     // ---- chat ----
 
     fun send(text: String) {
@@ -82,26 +111,50 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    /** Throws away the last answer and asks again. */
+    /** Replaces the user's last message, and the reply to it, and asks again. */
+    fun edit(text: String) {
+        val trimmed = text.trim()
+        val conversation = _current.value
+        val last = conversation.messages.indexOfLast { it.isUser }
+        if (trimmed.isEmpty() || _generating.value || last < 0) return
+        reply(
+            conversation.copy(
+                title = if (last == 0) titleFrom(trimmed) else conversation.title,
+                updatedAt = System.currentTimeMillis(),
+                messages = conversation.messages.take(last) + Message("user", trimmed),
+            ),
+        )
+    }
+
+    /** Throws away the last answer and asks again, or answers a question that never got its answer. */
     fun regenerate() {
         if (_generating.value) return
         val conversation = _current.value
-        if (conversation.messages.lastOrNull()?.isUser == false) {
-            reply(conversation.copy(messages = conversation.messages.dropLast(1)))
-        }
+        val last = conversation.messages.lastOrNull() ?: return
+        reply(if (last.isUser) conversation else conversation.copy(messages = conversation.messages.dropLast(1)))
+    }
+
+    /** Carries on with a reply that stopped short. */
+    fun continueReply() {
+        if (_generating.value) return
+        val conversation = _current.value
+        if (conversation.messages.lastOrNull()?.let { !it.isUser && it.cut } == true) reply(conversation, resume = true)
     }
 
     fun stop() = c.engine.stop()
 
-    private fun reply(conversation: Conversation) {
+    /** With [resume], the conversation ends with a reply that stopped short, and this carries on with it. */
+    private fun reply(conversation: Conversation, resume: Boolean = false) {
         if (modelStatus.value != ModelManager.Status.Ready) {
             _current.value = conversation
             _notice.value = "Autark is still setting up."
             return
         }
         val s = settings.value
+        val earlier = if (resume) conversation.messages.last() else Message("assistant", "", model = model.name)
         _generating.value = true
-        _current.value = conversation.copy(messages = conversation.messages + Message("assistant", "", model = model.name))
+        _reading.value = true
+        _current.value = if (resume) conversation else conversation.copy(messages = conversation.messages + earlier)
 
         replyJob = viewModelScope.launch {
             try {
@@ -111,21 +164,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
                 val (roles, contents) = transcript(conversation, s)
-                val options = LlamaEngine.Options(
-                    thinking = s.thinking,
-                    temperature = s.temperature,
-                    topP = 0.95f,
-                    maxTokens = s.maxTokens,
-                )
-                val text = StringBuilder()
-                c.engine.generate(roles, contents, options).collect { event ->
+                val text = StringBuilder(earlier.text)
+                var savedAt = System.nanoTime()
+                c.engine.generate(roles, contents, options(s), resume).collect { event ->
                     when (event) {
-                        is LlamaEngine.Event.Started -> Unit
+                        is LlamaEngine.Event.Started -> _reading.value = false
                         is LlamaEngine.Event.Text -> {
                             text.append(event.text)
-                            updateReply { it.copy(text = text.toString()) }
+                            // Marked cut until it finishes, in case Android stops the app first.
+                            updateReply { it.copy(text = text.toString(), cut = true) }
+                            if (System.nanoTime() - savedAt > SAVE_EVERY_NANOS) {
+                                savedAt = System.nanoTime()
+                                c.chats.save(_current.value)
+                            }
                         }
-                        is LlamaEngine.Event.Finished -> updateReply { it.copy(tokens = event.tokens, seconds = event.seconds) }
+                        is LlamaEngine.Event.Finished -> updateReply {
+                            it.copy(
+                                tokens = earlier.tokens + event.tokens,
+                                seconds = earlier.seconds + event.seconds,
+                                cut = event.end == LlamaEngine.End.Length,
+                            )
+                        }
                     }
                 }
             } catch (e: CancellationException) {
@@ -142,12 +201,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         now
                     }.copy(updatedAt = System.currentTimeMillis())
                     _current.value = final
+                    _reading.value = false
                     c.chats.save(final)
                     _generating.value = false
                 }
             }
         }
     }
+
+    /**
+     * The temperature is the Creativity setting. Qwen's model card recommends a presence penalty of
+     * 1.5–2 for Qwen 3.5 2B, but side by side (tools/engine-test/engine-ask, 24 Oct) it made the
+     * 2B worse: with it, sums came out wrong (working them out repeats digits, which it penalizes),
+     * and one reply said to share a UPI PIN with delivery partners. So chats keep llama.cpp's usual
+     * sampling, and thinking uses the card's setting for precise work, which has no penalty.
+     */
+    private fun options(s: Settings) = LlamaEngine.Options(
+        thinking = s.thinking,
+        temperature = s.temperature,
+        topP = 0.95f,
+        topK = if (s.thinking) 20 else 40,
+        minP = if (s.thinking) 0f else 0.05f,
+        presencePenalty = 0f,
+        maxTokens = s.maxTokens,
+    )
 
     /** What the model sees: the system prompt, then each message, with earlier reasoning left out. */
     private fun transcript(conversation: Conversation, s: Settings): Pair<List<String>, List<String>> {
@@ -195,10 +272,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (last.isUser) conversation else conversation.copy(messages = conversation.messages.dropLast(1) + change(last))
     }
 
-    fun newChat() = afterStopping { _current.value = Conversation() }
+    fun newChat() = afterStopping {
+        _shared.value = null
+        _current.value = Conversation()
+    }
 
     fun openChat(id: String) = afterStopping {
-        conversations.value.firstOrNull { it.id == id }?.let { _current.value = it }
+        conversations.value.firstOrNull { it.id == id }?.let {
+            _shared.value = null
+            _current.value = it
+        }
     }
 
     fun deleteChat(id: String) = afterStopping {
@@ -211,6 +294,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         c.chats.deleteAll()
         c.engine.forget()
         _current.value = Conversation()
+    }
+
+    // ---- text from other apps ----
+
+    /** Text shared from another app, or selected in one, starts a new chat about it. */
+    fun share(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        afterStopping {
+            _current.value = Conversation()
+            _shared.value = Shared(trimmed.take(SHARED_MAX_CHARS).trimEnd(), shortened = trimmed.length > SHARED_MAX_CHARS)
+            onTyping()  // a question about it is on its way
+        }
+    }
+
+    /** Asks about the shared text: [instruction] goes first, then the text. */
+    fun sendShared(instruction: String) {
+        val shared = _shared.value ?: return
+        if (instruction.isBlank() || _generating.value) return
+        _shared.value = null
+        send("${instruction.trim()}\n\n${shared.text}")
+    }
+
+    fun dropShared() {
+        _shared.value = null
     }
 
     private fun afterStopping(action: suspend () -> Unit) {
@@ -238,5 +346,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun titleFrom(text: String): String {
         val line = text.lineSequence().first().trim()
         return if (line.length <= 48) line else line.take(47).trimEnd() + "…"
+    }
+
+    private companion object {
+        const val SAVE_EVERY_NANOS = 2_000_000_000L
+
+        /** About 1,500 tokens of English, which leaves room for a reply at the default memory setting. */
+        const val SHARED_MAX_CHARS = 6000
     }
 }

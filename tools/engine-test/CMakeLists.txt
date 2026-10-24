@@ -21,7 +21,15 @@ set(LLAMA_OPENSSL OFF)
 
 set(AUTARK_ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
 add_subdirectory(${AUTARK_ROOT}/third_party/llama.cpp llama)
+include(${AUTARK_ROOT}/third_party/patches/patches.cmake)
+autark_patch_llama(${AUTARK_ROOT}/third_party/llama.cpp src/llama-model-loader.cpp llama-load-in-parallel.patch)
 
 add_executable(engine-test main.cpp ${AUTARK_ROOT}/app/src/main/cpp/engine.cpp)
 target_include_directories(engine-test PRIVATE ${AUTARK_ROOT}/app/src/main/cpp)
 target_link_libraries(engine-test PRIVATE llama llama-common)
+
+# Replies to a list of questions, for comparing sampling settings by reading them:
+#   build/engine-test/engine-ask path/to/model.gguf tools/engine-test/questions.txt --seeds 2
+add_executable(engine-ask ask.cpp ${AUTARK_ROOT}/app/src/main/cpp/engine.cpp)
+target_include_directories(engine-ask PRIVATE ${AUTARK_ROOT}/app/src/main/cpp)
+target_link_libraries(engine-ask PRIVATE llama llama-common)

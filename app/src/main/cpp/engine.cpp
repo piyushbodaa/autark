@@ -1,6 +1,7 @@
 #include "engine.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
@@ -8,6 +9,7 @@
 
 #if defined(__linux__)
 #include <dlfcn.h>
+#include <malloc.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #endif
@@ -33,6 +35,12 @@ constexpr int BATCH_SIZE = 512;
 
 constexpr const char * THINK_OPEN  = "<think>";
 constexpr const char * THINK_CLOSE = "</think>";
+
+// Closes reasoning that has run out of room, telling the model to answer from what it has thought
+// so far (the way Qwen documents a thinking budget).
+constexpr const char * THINK_OUT_OF_ROOM =
+    "\n\nConsidering the limited time by the user, I have to give the solution based on the thinking directly now.\n"
+    "</think>\n\n";
 
 void log_callback(ggml_log_level level, const char * text, void *) {
 #ifdef __ANDROID__
@@ -92,19 +100,37 @@ size_t release_mapped_pages(const std::string & path) {
 // Loading releases the file's pages as it goes, not only at the end: otherwise, just before the
 // end, the app holds every repacked weight twice, once copied and once in the file's pages.
 // llama.cpp maps the file with MAP_POPULATE, so all of it is resident before the first tensor is
-// read; the first call (at 0) lets that go before any copy is made.
+// read; the first call (at 0) lets that go before any copy is made. Progress only moves when a
+// tensor is done, and on Arm the output weights, a third of the model, are repacked as one, so
+// pages also go every 100 ms (third_party/patches has the loader call back that often while it
+// repacks); any still to be read come back from the page cache.
 struct LoadProgress {
+    using Clock = std::chrono::steady_clock;
     const std::string & path;
     float               released_at = -1;
+    Clock::time_point   released_time{};
 };
 
 bool on_load_progress(float progress, void * data) {
     auto * load = static_cast<LoadProgress *>(data);
-    if (progress - load->released_at >= 0.05f) {
+    const auto now = LoadProgress::Clock::now();
+    if (progress - load->released_at >= 0.05f || now - load->released_time >= std::chrono::milliseconds(100)) {
         release_mapped_pages(load->path);
         load->released_at = progress;
+        load->released_time = now;
     }
     return true;
+}
+
+// Repacking allocates large scratch buffers on the loader's threads and frees them there, and the
+// allocator may keep that memory for later instead of giving it back: on a Galaxy A15, half a
+// gigabyte stayed resident for minutes after loading.
+void return_free_memory() {
+#if defined(__ANDROID__)
+    if (mallopt(M_PURGE_ALL, 0) == 0) mallopt(M_PURGE, 0);  // M_PURGE_ALL needs Android 14
+#elif defined(__GLIBC__)
+    malloc_trim(0);
+#endif
 }
 
 bool is_space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
@@ -192,6 +218,27 @@ bool ends_with_think_open(const std::string & text) {
     return t.size() >= n && t.compare(t.size() - n, n, THINK_OPEN) == 0;
 }
 
+// A reply still inside its reasoning, the way Thinking.split() sees it in Kotlin.
+bool still_thinking(const std::string & text) {
+    const size_t start = text.find(THINK_OPEN);
+    return start != std::string::npos && trim(text.substr(0, start)).empty() &&
+           text.find(THINK_CLOSE, start) == std::string::npos;
+}
+
+common_params_sampling sampling_for(const ReplyOptions & options, int n_ctx) {
+    common_params_sampling sparams;
+    sparams.temp = options.temperature;
+    sparams.top_p = options.top_p;
+    sparams.top_k = options.top_k;
+    sparams.min_p = options.min_p;
+    sparams.penalty_present = options.presence_penalty;
+    // The penalty counts every token of the reply, not just the last 64. (llama.cpp reads -1 as
+    // "off" here, so the window is the context size.)
+    sparams.penalty_last_n = n_ctx;
+    sparams.seed = options.seed;
+    return sparams;
+}
+
 }  // namespace
 
 Engine::~Engine() { unload(); }
@@ -260,9 +307,13 @@ void Engine::unload() {
     cached.clear();
     ckpt_system = {};
     ckpt_turn = {};
+    ckpt_previous = {};
+    previous = {};
+    logits_ready = false;
     forget_conversation();
     pending.clear();
     prefix.clear();
+    how_ended = End::none;
     n_ctx = 0;
 }
 
@@ -281,6 +332,7 @@ int Engine::load(const std::string & path, int requested_ctx, int n_threads, int
         return ERR_LOAD_FAILED;
     }
     LOGI("Released %.0f MiB of mapped model pages", release_mapped_pages(path) / (1024.0 * 1024.0));
+    return_free_memory();
 
     const int trained = llama_model_n_ctx_train(model);
     llama_context_params cparams = llama_context_default_params();
@@ -381,25 +433,26 @@ bool Engine::repeat(const std::vector<Message> & messages, bool thinking, Target
     return true;
 }
 
-// A follow-up to the reply in the cache: everything the model has seen stays exactly as it
-// was, and only the new message is appended. Rendering the whole conversation again would not
-// match what is cached (Qwen's template, for one, drops the empty <think></think> from earlier
-// replies), and models with recurrent layers cannot go back to where the two differ.
-bool Engine::continuation(const std::vector<Message> & messages, bool thinking, Target & target) const {
-    const size_t n = conv.size();
-    if (n == 0 || cached.empty() || messages.size() != n + 2) return false;
+// A follow-up to the reply in `base`: everything the model has seen stays exactly as it was,
+// and only the new message is appended. Rendering the whole conversation again would not match
+// what is cached (Qwen's template, for one, drops the empty <think></think> from earlier
+// replies), and models with recurrent layers cannot go back to where the two differ. The base is
+// the turn the cache holds, or for an edited last message, the turn before it.
+bool Engine::continuation(const std::vector<Message> & messages, bool thinking, const Turn & base, Target & target) const {
+    const size_t n = base.conv.size();
+    if (n == 0 || base.n_tokens == 0 || base.n_tokens > cached.size() || messages.size() != n + 2) return false;
     for (size_t i = 0; i < n; ++i) {
-        if (!same(messages[i], conv[i])) return false;
+        if (!same(messages[i], base.conv[i])) return false;
     }
     const Message & answer = messages[n];
     const Message & question = messages[n + 1];
-    if (answer.role != "assistant" || question.role != "user" || answer.content != answer_of(reply)) return false;
+    if (answer.role != "assistant" || question.role != "user" || answer.content != answer_of(base.reply)) return false;
 
     // The template text between the answer and the new message comes from rendering just
     // the last exchange (and the system prompt, which some templates insist on seeing).
     std::vector<Message> tail;
     if (messages[0].role == "system") tail.push_back(messages[0]);
-    tail.push_back(conv.back());
+    tail.push_back(base.conv.back());
     tail.push_back(answer);
     tail.push_back(question);
     common_chat_prompt prompt;
@@ -413,17 +466,18 @@ bool Engine::continuation(const std::vector<Message> & messages, bool thinking, 
     // The template closes the answer with the end-of-turn token. If the reply ended on its own,
     // the cache already holds that token; if it was cut short, it still needs it.
     std::vector<common_chat_prompt_part> delta(parts.begin() + a + 1, parts.end());
-    const llama_token eot_token = reply_closed ? cached.back() : llama_vocab_eot(llama_model_get_vocab(model));
+    const llama_token eot_token =
+        base.reply_closed ? cached[base.n_tokens - 1] : llama_vocab_eot(llama_model_get_vocab(model));
     if (eot_token == LLAMA_TOKEN_NULL) return false;
     const std::string eot = common_token_to_piece(ctx, eot_token, /* special */ true);
     if (delta[0].text.compare(0, eot.size(), eot) != 0) return false;
-    if (reply_closed) delta[0].text.erase(0, eot.size());
+    if (base.reply_closed) delta[0].text.erase(0, eot.size());
     std::vector<size_t> ends;
     const llama_tokens tokens = tokenize(delta, false, &ends);
-    target.tokens = cached;
+    target.tokens.assign(cached.begin(), cached.begin() + static_cast<long>(base.n_tokens));
     target.tokens.insert(target.tokens.end(), tokens.begin(), tokens.end());
     target.system_end = 0;
-    target.user_end = cached.size() + ends[static_cast<size_t>(q - a - 1)];
+    target.user_end = base.n_tokens + ends[static_cast<size_t>(q - a - 1)];
     target.opens_thinking = ends_with_think_open(parts.back().text);
     return true;
 }
@@ -508,21 +562,33 @@ void Engine::clear_cache() {
     cached.clear();
     ckpt_system.data.clear();
     ckpt_turn.data.clear();
+    truncated(0);
+}
+
+// The cache lost what it held past `n_tokens`: the logits no longer follow its last token, and
+// the turn to go back to for an edit is gone if it ended later.
+void Engine::truncated(size_t n_tokens) {
+    logits_ready = false;
+    if (previous.n_tokens > n_tokens) {
+        previous = {};
+        ckpt_previous.data.clear();
+    }
 }
 
 // Goes back to the latest checkpoint at or before `limit`, or to an empty cache.
 size_t Engine::restore_best(size_t limit) {
     Checkpoint * best = nullptr;
-    for (Checkpoint * c : {&ckpt_turn, &ckpt_system}) {
+    for (Checkpoint * c : {&ckpt_turn, &ckpt_previous, &ckpt_system}) {
         if (c->data.empty() || c->n_tokens > limit || c->n_tokens > cached.size()) continue;
         if (!best || c->n_tokens > best->n_tokens) best = c;
     }
     if (best && restore(*best)) {
         unsaved = true;
         cached.resize(best->n_tokens);
-        for (Checkpoint * c : {&ckpt_turn, &ckpt_system}) {
+        for (Checkpoint * c : {&ckpt_turn, &ckpt_previous, &ckpt_system}) {
             if (c->n_tokens > cached.size()) c->data.clear();
         }
+        truncated(cached.size());
         return cached.size();
     }
     clear_cache();
@@ -536,6 +602,7 @@ size_t Engine::rewind(size_t keep) {
     if (can_rewind && llama_memory_seq_rm(llama_get_memory(ctx), 0, static_cast<llama_pos>(keep), -1)) {
         cached.resize(keep);
         unsaved = true;
+        truncated(keep);
         return keep;
     }
     return restore_best(keep);
@@ -570,11 +637,13 @@ int Engine::process(const Target & target, size_t from, bool want_logits) {
             // llama.cpp drops a failed batch from the attention cache, but recurrent state may
             // be half-updated.
             if (rc != 2) LOGE("Prompt decode failed with %d", rc);
+            logits_ready = false;
             if (!can_rewind) restore_best(cached.size());
             return rc == 2 ? ERR_ABORTED : ERR_DECODE;
         }
         cached.insert(cached.end(), tokens.begin() + static_cast<long>(i), tokens.begin() + static_cast<long>(end));
         unsaved = true;
+        logits_ready = want_logits && end == n;
         i = end;
         if (!can_rewind && i == target.system_end) save(ckpt_system);
         if (!can_rewind && i == target.user_end) save(ckpt_turn);
@@ -587,20 +656,33 @@ int Engine::prompt(const std::vector<Message> & messages, const ReplyOptions & o
     stopping = false;
     finish();
     stats = {};
+    how_ended = End::none;
 
     const int reserve = std::min(options.max_tokens, n_ctx / 2);
+    const auto fits = [&](const Target & t) { return static_cast<int>(t.tokens.size()) + reserve <= n_ctx; };
+    enum class From { repeat, current, previous, whole } from = From::whole;
     Target target;
-    bool appended = false;
-    if (!repeat(messages, options.thinking, target)) {
-        appended = continuation(messages, options.thinking, target) &&
-                   static_cast<int>(target.tokens.size()) + reserve <= n_ctx;
-        if (!appended) {
-            target = {};
-            const int rc = whole(messages, options.thinking, reserve, target);
-            if (rc < 0) return rc;
-        }
+    if (repeat(messages, options.thinking, target)) {
+        from = From::repeat;
+    } else if (continuation(messages, options.thinking, {conv, reply, reply_closed, cached.size()}, target) && fits(target)) {
+        from = From::current;
+    } else if (continuation(messages, options.thinking, previous, target) && fits(target)) {
+        from = From::previous;  // the user edited their last message
+    } else {
+        target = {};
+        const int rc = whole(messages, options.thinking, reserve, target);
+        if (rc < 0) return rc;
     }
     if (target.tokens.empty()) return ERR_TEMPLATE;
+
+    // The turn in the cache becomes the one to go back to if the user edits the message that
+    // follows it. Retry and edits keep the one they started from.
+    if (from == From::current) {
+        previous = {conv, reply, reply_closed, cached.size()};
+    } else if (from == From::whole) {
+        previous = {};
+        ckpt_previous.data.clear();
+    }
     forget_conversation();  // the cache is about to change
 
     // Reuse the longest common prefix with what is already in the cache.
@@ -609,6 +691,7 @@ int Engine::prompt(const std::vector<Message> & messages, const ReplyOptions & o
     while (keep < cached.size() && keep < tokens.size() && cached[keep] == tokens[keep]) ++keep;
     if (keep == tokens.size()) --keep;  // always decode at least one token to get fresh logits
     keep = rewind(keep);
+    if (from == From::current && !can_rewind) save(ckpt_previous);
 
     busy = Busy::prompt;
     const int rc = process(target, keep, true);
@@ -617,15 +700,11 @@ int Engine::prompt(const std::vector<Message> & messages, const ReplyOptions & o
     stats.tokens = static_cast<int>(tokens.size());
     stats.reused = static_cast<int>(keep);
     stats.processed = static_cast<int>(tokens.size() - keep);
-    stats.appended = appended;
-    LOGI("Prompt: %d tokens, %d reused from cache%s", stats.tokens, stats.reused, appended ? " (appended)" : "");
+    stats.appended = from == From::current;
+    stats.edited = from == From::previous;
+    LOGI("Prompt: %d tokens, %d reused from cache%s", stats.tokens, stats.reused,
+         stats.appended ? " (appended)" : stats.edited ? " (edited)" : "");
     if (rc != 0) return rc;
-
-    common_params_sampling sparams;
-    sparams.temp = options.temperature;
-    sparams.top_p = options.top_p;
-    sparams.seed = options.seed;
-    sampler = common_sampler_init(model, sparams);
 
     conv = messages;
     asked = target;
@@ -633,10 +712,101 @@ int Engine::prompt(const std::vector<Message> & messages, const ReplyOptions & o
     // When the template opens the reasoning block itself, the app still needs to see it.
     prefix = target.opens_thinking ? THINK_OPEN : "";
     reply = prefix;
+    in_thought = target.opens_thinking;
+    pending.clear();
+    start_reply(options, cached.size());
+    return stats.tokens;
+}
+
+int Engine::resume(const std::vector<Message> & messages, const ReplyOptions & options) {
+    if (!ctx) return ERR_NO_MODEL;
+    if (messages.size() < 2 || messages.back().role != "assistant") return ERR_TEMPLATE;
+    stopping = false;
+    finish();
+    stats = {};
+    how_ended = End::none;
+
+    const std::vector<Message> question(messages.begin(), messages.end() - 1);
+    const Message & partial = messages.back();
+    Target target;
+    std::string text;         // the reply so far, as the engine keeps it
+    size_t reply_start = 0;   // where its tokens start
+    bool rebuilt = false;
+    if (!reply_closed && holds_reply(question, partial)) {
+        // The cache ends with the reply, the way next() left it.
+        target = asked;
+        target.tokens = cached;
+        text = reply;
+        reply_start = asked.tokens.size();
+    } else {
+        // The conversation with the reply so far as its last message, cut just before the
+        // end-of-turn token that would close it. Earlier reasoning is gone by now.
+        common_chat_prompt prompt;
+        if (!render(messages, false, options.thinking, prompt)) return ERR_TEMPLATE;
+        const auto & parts = prompt.parts;
+        const int a = find_content(parts, partial.content, static_cast<int>(parts.size()));
+        const int q = a > 0 ? find_content(parts, question.back().content, a) : -1;
+        if (q < 0 || parts[a - 1].is_input) return ERR_TEMPLATE;
+        std::vector<size_t> ends;
+        target.tokens = tokenize(parts, true, &ends);
+        target.tokens.resize(ends[static_cast<size_t>(a)]);
+        target.user_end = ends[static_cast<size_t>(q)];
+        if (messages[0].role == "system") {
+            const int s = find_content(parts, messages[0].content, q);
+            if (s >= 0) target.system_end = ends[static_cast<size_t>(s)];
+        }
+        text = partial.content;
+        reply_start = ends[static_cast<size_t>(a - 1)];
+        rebuilt = true;
+    }
+    if (static_cast<int>(target.tokens.size()) + 64 > n_ctx) return ERR_TOO_LONG;
+    const Target prompt_part = rebuilt ? Target{} : asked;
+    forget_conversation();
+
+    const auto & tokens = target.tokens;
+    size_t keep = 0;
+    while (keep < cached.size() && keep < tokens.size() && cached[keep] == tokens[keep]) ++keep;
+    if (keep == tokens.size() && !logits_ready) --keep;  // the last token's logits are needed again
+    keep = rewind(keep);
+
+    busy = Busy::prompt;
+    const int rc = keep < tokens.size() ? process(target, keep, true) : 0;
+    busy = Busy::idle;
+
+    stats.tokens = static_cast<int>(tokens.size());
+    stats.reused = static_cast<int>(keep);
+    stats.processed = static_cast<int>(tokens.size() - keep);
+    LOGI("Resume: %d tokens, %d reused from cache", stats.tokens, stats.reused);
+    if (rc != 0) return rc;
+
+    conv = question;
+    if (rebuilt) {
+        // Retry renders the question again instead: its reply may open differently.
+        asked = {};
+        asked_thinking = false;
+    } else {
+        asked = prompt_part;
+    }
+    reply = text;
+    reply_closed = false;
+    prefix.clear();
+    if (rebuilt) pending.clear();  // otherwise it holds the start of a character the reply was cut inside
+    in_thought = still_thinking(text);
+    start_reply(options, reply_start);
+    if (in_thought) thought_budget = 0;  // whatever was left to think about, the answer comes now
+    return stats.tokens;
+}
+
+// Sets up sampling for a reply whose tokens start at `reply_start` in the cache; any that are
+// already there count towards the penalties.
+void Engine::start_reply(const ReplyOptions & options, size_t reply_start) {
+    common_params_sampling sparams = sampling_for(options, n_ctx);
+    sampler = common_sampler_init(model, sparams);
+    for (size_t i = reply_start; i < cached.size(); ++i) common_sampler_accept(sampler, cached[i], false);
     n_generated = 0;
     max_tokens = options.max_tokens;
-    pending.clear();
-    return stats.tokens;
+    thought_tokens = 0;
+    thought_budget = options.max_tokens * 3 / 4;
 }
 
 bool Engine::next(std::string & piece) {
@@ -646,26 +816,37 @@ bool Engine::next(std::string & piece) {
         piece.swap(prefix);
         return true;
     }
-    if (stopping.load() || n_generated >= max_tokens || static_cast<int>(cached.size()) >= n_ctx) return finish();
+    if (stopping.load()) {
+        how_ended = End::stopped;
+        return finish();
+    }
+    if (n_generated >= max_tokens) {
+        how_ended = End::length;
+        return finish();
+    }
+    if (static_cast<int>(cached.size()) >= n_ctx) {
+        how_ended = End::full;
+        return finish();
+    }
+    // A small model can think in circles (Qwen warns about it for the 2B): past its budget, the
+    // reasoning is closed for it while there is room left for an answer.
+    if (in_thought && thought_tokens >= thought_budget && pending.empty()) return close_thought(piece);
 
     const llama_token token = common_sampler_sample(sampler, ctx, -1);
     common_sampler_accept(sampler, token, true);
 
     batch.clear();
     batch.add(token, static_cast<llama_pos>(cached.size()), 0, true);
-    if (llama_process(ctx, LLAMA_PROCESS_TYPE_DECODE, batch.get()) != 0) {
-        LOGE("Decode failed while generating");
-        if (!can_rewind) restore_best(cached.size());
-        forget_conversation();
-        return finish();
-    }
+    if (llama_process(ctx, LLAMA_PROCESS_TYPE_DECODE, batch.get()) != 0) return fail();
     cached.push_back(token);
     unsaved = true;
+    logits_ready = true;
     ++n_generated;
 
     // The end-of-turn token stays in the cache, so the next message can follow it directly.
     if (llama_vocab_is_eog(llama_model_get_vocab(model), token)) {
         reply_closed = true;
+        how_ended = End::done;
         return finish();
     }
 
@@ -674,7 +855,43 @@ bool Engine::next(std::string & piece) {
     piece = pending.substr(0, ready);
     pending.erase(0, ready);
     reply += piece;
+    if (in_thought) {
+        ++thought_tokens;
+        const size_t from = reply.size() - std::min(reply.size(), piece.size() + strlen(THINK_CLOSE));
+        if (reply.find(THINK_CLOSE, from) != std::string::npos) in_thought = false;
+    }
     return true;
+}
+
+// Feeds the model the end of its reasoning as if it had written it, and hands the app that text
+// as the next piece.
+bool Engine::close_thought(std::string & piece) {
+    const llama_tokens tokens = common_tokenize(llama_model_get_vocab(model), THINK_OUT_OF_ROOM, false, true);
+    batch.clear();
+    for (size_t i = 0; i < tokens.size(); ++i) {
+        batch.add(tokens[i], static_cast<llama_pos>(cached.size() + i), 0, i + 1 == tokens.size());
+    }
+    if (llama_process(ctx, LLAMA_PROCESS_TYPE_DECODE, batch.get()) != 0) return fail();
+    for (const llama_token token : tokens) common_sampler_accept(sampler, token, false);
+    cached.insert(cached.end(), tokens.begin(), tokens.end());
+    unsaved = true;
+    logits_ready = true;
+    in_thought = false;  // the model didn't write these tokens, so they don't count towards max_tokens
+    LOGI("Closed the reasoning after %d tokens", thought_tokens);
+    piece = THINK_OUT_OF_ROOM;
+    reply += piece;
+    return true;
+}
+
+// Decoding failed part-way through a reply: recurrent state may be half-updated, so the cache
+// goes back to a checkpoint.
+bool Engine::fail() {
+    LOGE("Decode failed while generating");
+    logits_ready = false;
+    if (!can_rewind) restore_best(cached.size());
+    forget_conversation();
+    how_ended = End::failed;
+    return finish();
 }
 
 void Engine::forget() {

@@ -50,13 +50,20 @@ class LlamaEngine(private val nativeLibDir: String, private val sessionFile: Fil
     sealed interface Event {
         data class Started(val promptTokens: Int) : Event
         data class Text(val text: String) : Event
-        data class Finished(val tokens: Int, val seconds: Double) : Event
+        data class Finished(val tokens: Int, val seconds: Double, val end: End) : Event
     }
+
+    /** How a reply ended; the same order as autark::End in engine.h. */
+    enum class End { None, Done, Length, Stopped, Full, Failed }
 
     data class Options(
         val thinking: Boolean,
         val temperature: Float,
         val topP: Float,
+        val topK: Int,
+        val minP: Float,
+        /** Counted over the whole reply, the way Qwen's model cards mean it. */
+        val presencePenalty: Float,
         val maxTokens: Int,
     )
 
@@ -108,23 +115,28 @@ class LlamaEngine(private val nativeLibDir: String, private val sessionFile: Fil
 
     /**
      * Streams a reply to the conversation. [roles] and [contents] are parallel lists of
-     * messages ("system", "user" or "assistant"). Call [stop] to end the reply early;
+     * messages ("system", "user" or "assistant"). With [resume], the last message is a reply
+     * that was cut off, and the flow carries on with it. Call [stop] to end the reply early;
      * the flow then finishes normally with whatever was generated.
      */
-    fun generate(roles: List<String>, contents: List<String>, options: Options): Flow<Event> = flow {
+    fun generate(roles: List<String>, contents: List<String>, options: Options, resume: Boolean = false): Flow<Event> = flow {
         stopRequested = false
         mutex.withLock {
             // Stop may be tapped while a prefill still holds the engine.
             if (stopRequested) {
-                emit(Event.Finished(0, 0.0))
+                emit(Event.Finished(0, 0.0, End.Stopped))
                 return@withLock
             }
             val promptTokens = Native.prompt(
                 bytes(roles),
                 bytes(contents),
+                resume,
                 options.thinking,
                 options.temperature,
                 options.topP,
+                options.topK,
+                options.minP,
+                options.presencePenalty,
                 options.maxTokens,
             )
             if (promptTokens < 0) throw EngineException(promptTokens, messageFor(promptTokens))
@@ -139,7 +151,8 @@ class LlamaEngine(private val nativeLibDir: String, private val sessionFile: Fil
                 tokens++
                 if (piece.isNotEmpty()) emit(Event.Text(piece.toString(Charsets.UTF_8)))
             }
-            emit(Event.Finished(tokens, (System.nanoTime() - start) / 1e9))
+            val end = End.entries.getOrElse(Native.ended()) { End.None }
+            emit(Event.Finished(tokens, (System.nanoTime() - start) / 1e9, end))
         }
     }.flowOn(dispatcher)
 

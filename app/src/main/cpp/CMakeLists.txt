@@ -18,6 +18,8 @@ endif()
 
 set(LLAMA_SRC ${CMAKE_CURRENT_LIST_DIR}/../../../../third_party/llama.cpp)
 add_subdirectory(${LLAMA_SRC} llama)
+include(${CMAKE_CURRENT_LIST_DIR}/../../../../third_party/patches/patches.cmake)
+autark_patch_llama(${LLAMA_SRC} src/llama-model-loader.cpp llama-load-in-parallel.patch)
 
 # llama.cpp's common library (chat templates, tokenizing, sampling) is linked into libautark
 # rather than shipped as its own 4 MB libllama-common.so, so the linker keeps only what Autark

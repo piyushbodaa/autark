@@ -15,15 +15,25 @@ internal object Native {
 
     external fun supportsThinking(): Boolean
 
-    /** Returns the prompt length in tokens, or a negative error code. */
+    /**
+     * Returns the prompt length in tokens, or a negative error code. With [resume], the last
+     * message is a reply that was cut off, and [next] carries on with it.
+     */
     external fun prompt(
         roles: Array<ByteArray>,
         contents: Array<ByteArray>,
+        resume: Boolean,
         thinking: Boolean,
         temperature: Float,
         topP: Float,
+        topK: Int,
+        minP: Float,
+        presencePenalty: Float,
         maxTokens: Int,
     ): Int
+
+    /** How the last reply ended, as LlamaEngine.End's ordinal. */
+    external fun ended(): Int
 
     /** The next piece of text (possibly empty), or null when the reply is complete. */
     external fun next(): ByteArray?

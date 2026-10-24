@@ -173,7 +173,10 @@ class DeviceTest {
             val events = engine.generate(
                 listOf("system", "user"),
                 listOf("You are Autark, a helpful assistant.", "What can you do without the internet?"),
-                LlamaEngine.Options(thinking = false, temperature = 0.7f, topP = 0.95f, maxTokens = 96),
+                LlamaEngine.Options(
+                    thinking = false, temperature = 0.7f, topP = 0.95f, topK = 40, minP = 0.05f,
+                    presencePenalty = 0f, maxTokens = 96,
+                ),
             ).toList()
             val reply = events.filterIsInstance<LlamaEngine.Event.Text>().joinToString("") { it.text }
             val finished = events.filterIsInstance<LlamaEngine.Event.Finished>().single()

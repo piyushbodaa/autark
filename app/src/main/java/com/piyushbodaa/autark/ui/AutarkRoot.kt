@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.piyushbodaa.autark.data.Conversation
@@ -46,6 +47,10 @@ enum class Screen { Chat, Settings }
 @Composable
 fun AutarkRoot(vm: AppViewModel = viewModel()) {
     val status by vm.modelStatus.collectAsStateWithLifecycle()
+    LifecycleStartEffect(vm) {
+        vm.onAppVisible()
+        onStopOrDispose { vm.onAppHidden() }
+    }
     if (status != ModelManager.Status.Ready) {
         SetupScreen(vm.model, status, onDownload = vm::startDownload, onCancel = vm::cancelDownload)
         return

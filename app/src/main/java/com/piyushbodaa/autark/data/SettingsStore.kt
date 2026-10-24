@@ -18,6 +18,12 @@ data class Settings(
     companion object {
         const val DEFAULT_SYSTEM_PROMPT =
             "You are Autark, a helpful assistant that runs privately on the user's phone. " +
+                "Answer clearly and briefly. Reply in the language the user writes in. " +
+                "Write maths in plain text, not LaTeX."
+
+        /** Until 0.4.1. Phones that kept it get the new one. */
+        const val OLD_SYSTEM_PROMPT =
+            "You are Autark, a helpful assistant that runs privately on the user's phone. " +
                 "Answer clearly and briefly. Reply in the language the user writes in."
     }
 }
@@ -42,8 +48,11 @@ class SettingsStore(context: Context) {
 
     private fun read(): Settings {
         val d = Settings()
+        // Every setting is saved whenever one changes, so an unedited default prompt is stored too.
+        val prompt = prefs.getString("systemPrompt", d.systemPrompt)
+            ?.takeIf { it != Settings.OLD_SYSTEM_PROMPT } ?: d.systemPrompt
         return Settings(
-            systemPrompt = prefs.getString("systemPrompt", d.systemPrompt) ?: d.systemPrompt,
+            systemPrompt = prompt,
             temperature = prefs.getFloat("temperature", d.temperature),
             contextSize = prefs.getInt("contextSize", d.contextSize),
             maxTokens = prefs.getInt("maxTokens", d.maxTokens),

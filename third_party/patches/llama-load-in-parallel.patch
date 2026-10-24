@@ -1,0 +1,104 @@
+--- a/src/llama-model-loader.cpp	2026-10-24 13:42:15.567298991 +0530
++++ b/src/llama-model-loader.cpp	2026-10-24 14:14:44.458820389 +0530
+@@ -8,13 +8,20 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <atomic>
++#include <chrono>
+ #include <cinttypes>
+ #include <cstdint>
+ #include <cstring>
+ #include <future>
+ #include <regex>
++#include <thread>
+ #include <unordered_set>
+ 
++#if defined(__linux__)
++#include <sys/resource.h>
++#endif
++
+ static const size_t kiB = 1024;
+ static const size_t MiB = 1024*kiB;
+ static const size_t GiB = 1024*MiB;
+@@ -1681,6 +1688,20 @@
+         });
+     }
+ 
++    // Weights that a CPU buffer type copies in itself, repacking them for its faster kernels, are
++    // set on several threads after this loop: each is independent, and one by one, repacking is
++    // most of the load time on a phone. (Autark)
++    struct cpu_set {
++        ggml_tensor   * tensor;
++        const uint8_t * data;
++        size_t          size;
++    };
++    std::vector<cpu_set> cpu_sets;
++    const auto is_cpu = [](ggml_backend_buffer_t buf) {
++        ggml_backend_dev_t dev = ggml_backend_buft_get_device(ggml_backend_buffer_get_type(buf));
++        return dev != nullptr && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU;
++    };
++
+     for (struct ggml_tensor * cur : tensors) {
+         const auto * weight = get_weight(ggml_get_name(cur));
+         if (weight == nullptr) {
+@@ -1731,6 +1752,9 @@
+                 auto & mmap_used = mmaps_used[weight->idx];
+                 mmap_used.first  = std::min(mmap_used.first,  weight->offs);
+                 mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
++            } else if (is_cpu(cur->buffer)) {
++                cpu_sets.push_back({cur, data, n_size});
++                continue; // counted in size_done once it is set
+             } else {
+                 ggml_backend_tensor_set(cur, data, 0, n_size);
+             }
+@@ -1815,6 +1839,49 @@
+         size_done += n_size;
+     }
+ 
++    if (!cpu_sets.empty()) {
++        // biggest first, so that no thread is left with a big one at the end
++        std::stable_sort(cpu_sets.begin(), cpu_sets.end(), [](const cpu_set & a, const cpu_set & b) {
++            return a.size > b.size;
++        });
++        std::atomic<size_t> next{0};
++        std::atomic<size_t> done{0};
++        std::atomic<size_t> running{0};
++        std::atomic<bool>   cancelled{false};
++        const size_t n_threads = std::min<size_t>(cpu_sets.size(), std::max(1u, std::thread::hardware_concurrency()));
++        std::vector<std::thread> workers;
++        running = n_threads;
++        for (size_t t = 0; t < n_threads; ++t) {
++            workers.emplace_back([&] {
++#if defined(__linux__)
++                // behind the app's own threads, so its UI stays smooth while every core is busy
++                setpriority(PRIO_PROCESS, 0, std::min(19, getpriority(PRIO_PROCESS, 0) + 10));
++#endif
++                for (size_t i = next++; i < cpu_sets.size() && !cancelled; i = next++) {
++                    ggml_backend_tensor_set(cpu_sets[i].tensor, cpu_sets[i].data, 0, cpu_sets[i].size);
++                    done += cpu_sets[i].size;
++                }
++                running--;
++            });
++        }
++        // this thread only reports progress, so the callback (which may free the mapped pages read
++        // so far) keeps coming even while every worker is busy with one large tensor
++        while (running > 0) {
++            if (progress_callback && !cancelled &&
++                !progress_callback((float) (size_done + done) / size_data, progress_callback_user_data)) {
++                cancelled = true;
++            }
++            std::this_thread::sleep_for(std::chrono::milliseconds(10));
++        }
++        for (auto & worker : workers) {
++            worker.join();
++        }
++        size_done += done;
++        if (cancelled) {
++            return false;
++        }
++    }
++
+     // free temporary resources used for async uploads
+     for (auto * event : events) {
+         ggml_backend_event_synchronize(event);

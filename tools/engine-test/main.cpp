@@ -4,7 +4,9 @@
 // replaces, and a new chat must match the same chat run on an empty cache.
 //
 //   engine-test MODEL.gguf [--ctx N] [--threads N] [--threads-batch N] [--max-tokens N]
-//                          [--turns N] [--verbose]
+//                          [--turns N] [--verbose] [--load-only]
+//
+// --load-only stops after loading the model, to time loads.
 
 #include <chrono>
 #include <cstdio>
@@ -27,7 +29,8 @@ double ms_since(Clock::time_point t) {
 
 const char * SYSTEM_PROMPT =
     "You are Autark, a helpful assistant that runs privately on the user's phone. "
-    "Answer clearly and briefly. Reply in the language the user writes in.";
+    "Answer clearly and briefly. Reply in the language the user writes in. "
+    "Write maths in plain text, not LaTeX.";
 
 const std::vector<std::string> QUESTIONS = {
     "Explain how UPI works, simply.",
@@ -65,12 +68,13 @@ struct Runner {
     std::vector<Step> steps;
     int failures = 0;
 
-    // Asks for a reply the way AppViewModel does. Stops after `stop_after` pieces if set.
-    std::string ask(const Chat & chat, const std::string & label, int stop_after = -1) {
+    // Asks for a reply the way AppViewModel does. Stops after `stop_after` pieces if set. With
+    // `resume`, the chat ends with a reply that was cut off, and this carries on with it.
+    std::string ask(const Chat & chat, const std::string & label, int stop_after = -1, bool resume = false) {
         Step step;
         step.label = label;
         const auto start = Clock::now();
-        const int rc = engine.prompt(chat, options);
+        const int rc = resume ? engine.resume(chat, options) : engine.prompt(chat, options);
         step.prompt_ms = ms_since(start);
         if (rc < 0) {
             fprintf(stderr, "%s: prompt failed with %d\n", label.c_str(), rc);
@@ -116,15 +120,15 @@ struct Runner {
     }
 
     void print() const {
-        printf("\n%-16s %7s %7s %9s %10s %12s %5s %7s\n", "step", "prompt", "reused", "processed", "prompt ms",
+        printf("\n%-17s %7s %7s %9s %10s %12s %5s %7s\n", "step", "prompt", "reused", "processed", "prompt ms",
                "1st token ms", "gen", "tok/s");
         int processed = 0;
         double waited = 0;
         for (const auto & s : steps) {
-            printf("%-16s %7d %7d %9d %10.0f %12.0f %5d %7.1f  %s%s\n", s.label.c_str(), s.stats.tokens, s.stats.reused,
+            printf("%-17s %7d %7d %9d %10.0f %12.0f %5d %7.1f  %s%s\n", s.label.c_str(), s.stats.tokens, s.stats.reused,
                    s.stats.processed, s.prompt_ms, s.first_ms, s.generated,
-                   s.gen_ms > 0 ? s.generated * 1000.0 / s.gen_ms : 0.0, s.stats.appended ? "appended " : "",
-                   s.note.c_str());
+                   s.gen_ms > 0 ? s.generated * 1000.0 / s.gen_ms : 0.0,
+                   s.stats.appended ? "appended " : s.stats.edited ? "edited " : "", s.note.c_str());
             processed += s.stats.processed;
             waited += s.first_ms;
         }
@@ -156,13 +160,13 @@ std::string memory_now() {
 int main(int argc, char ** argv) {
     if (argc < 2) {
         fprintf(stderr, "usage: %s MODEL.gguf [--ctx N] [--threads N] [--threads-batch N] [--max-tokens N] "
-                        "[--turns N] [--verbose]\n", argv[0]);
+                        "[--turns N] [--verbose] [--load-only]\n", argv[0]);
         return 1;
     }
     const std::string model_path = argv[1];
     int n_ctx = 4096, n_threads = 4, n_threads_batch = 0, max_tokens = 256;
     int n_turns = static_cast<int>(QUESTIONS.size());
-    bool verbose = false;
+    bool verbose = false, load_only = false;
     for (int i = 2; i < argc; ++i) {
         const bool has_value = i + 1 < argc;
         if (!strcmp(argv[i], "--ctx") && has_value) n_ctx = atoi(argv[++i]);
@@ -171,6 +175,7 @@ int main(int argc, char ** argv) {
         else if (!strcmp(argv[i], "--max-tokens") && has_value) max_tokens = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--turns") && has_value) n_turns = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--verbose")) verbose = true;
+        else if (!strcmp(argv[i], "--load-only")) load_only = true;
     }
     if (n_threads_batch <= 0) n_threads_batch = n_threads;
     n_turns = std::min<int>(n_turns, static_cast<int>(QUESTIONS.size()));
@@ -186,6 +191,7 @@ int main(int argc, char ** argv) {
     printf("loaded %s (%d context tokens, %d/%d threads) in %.0f ms, memory: %s, %.0f MiB at peak\n",
            engine.describe().c_str(), allocated, n_threads, n_threads_batch, ms_since(load_start), memory_now().c_str(),
            memory("VmHWM"));
+    if (load_only) return 0;
 
     Runner run{engine};
     run.verbose = verbose;
@@ -252,8 +258,40 @@ int main(int argc, char ** argv) {
     run.prefill(chat, "after reload");
     run.check(run.steps.back().prompt_ms < 50, "nothing left to process");
     chat.push_back({"user", "And what's 5 + 5?"});
-    run.ask(chat, "ask after reload");
+    const std::string five = run.ask(chat, "ask after reload");
     run.check(run.steps.back().stats.appended, "appended");
+
+    // Edit that last message, then put it back: each time the cache goes back to the end of the
+    // reply before it, and the original question gets its original reply.
+    chat.back().content = "And what's 6 + 6?";
+    run.ask(chat, "edit");
+    run.check(run.steps.back().stats.edited && run.steps.back().stats.processed < 64, "only the new message processed");
+    chat.back().content = "And what's 5 + 5?";
+    run.check(run.ask(chat, "edit back") == five, "same reply as before the edits");
+    chat.push_back({"assistant", answer_of(five)});
+    chat.push_back({"user", "Thanks!"});
+    run.ask(chat, "after edits");
+    run.check(run.steps.back().stats.appended, "appended");
+
+    // A reply cut off at the length limit and continued reads the same as one written in one go.
+    {
+        const autark::ReplyOptions plain = run.options;
+        Chat counting = {{"system", SYSTEM_PROMPT}, {"user", "Count from 1 to 40, separated by commas."}};
+        run.options.max_tokens = 48;
+        const std::string in_one_go = run.ask(counting, "48 tokens");
+        run.options.max_tokens = 24;
+        std::string cut = run.ask(counting, "24 tokens");
+        run.check(engine.ended() == autark::End::length, "cut off at the limit");
+        counting.push_back({"assistant", answer_of(cut)});
+        cut += run.ask(counting, "continue", -1, true);
+        run.check(run.steps.back().stats.processed == 0 && cut == in_one_go, "nothing to process, same text as in one go");
+        // Once the cache has moved on, the reply is rebuilt from the chat.
+        counting.back().content = answer_of(cut);
+        run.prefill({{"system", SYSTEM_PROMPT}}, "new chat: prefill");
+        run.ask(counting, "continue later", -1, true);
+        run.check(run.steps.back().generated > 0 && engine.ended() != autark::End::failed, "carried on");
+        run.options = plain;
+    }
 
     // Thinking: the reply has to arrive with its <think> block for the app to fold it away.
     const autark::ReplyOptions plain = run.options;
@@ -272,6 +310,13 @@ int main(int argc, char ** argv) {
     } else {
         run.check(run.steps.back().stats.processed < 64, "cut off while thinking: only the new message processed");
     }
+    // Reasoning that would run past its budget is closed with room left for an answer.
+    run.options.max_tokens = 160;
+    const std::string brief = run.ask({{"system", SYSTEM_PROMPT},
+                                       {"user", "A shop sells pens at 7 rupees each. I buy 13 pens and pay with a "
+                                                "100 rupee note. How much change do I get? Check your working twice."}},
+                                      "thinking budget");
+    run.check(brief.find("</think>") != std::string::npos && !answer_of(brief).empty(), "closed, then answered");
     run.options = plain;
 
     run.print();

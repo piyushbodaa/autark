@@ -53,5 +53,6 @@ gcloud firebase test android run \
 
 bucket=$(grep -o 'storage/browser/[^/]*' "$out/gcloud.log" | head -1 | cut -d/ -f3)
 [ -n "$bucket" ] || { echo "No results bucket in the gcloud output" >&2; exit 1; }
-gcloud storage cp -r "gs://$bucket/$run/*" "$out/"
+# Everything but the model, which Test Lab files under the results too.
+gcloud storage rsync --recursive --exclude=".*\.gguf$" "gs://$bucket/$run" "$out"
 tools/device-test/summarize.py "$out"

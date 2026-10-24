@@ -76,13 +76,23 @@ Java_com_piyushbodaa_autark_engine_Native_supportsThinking(JNIEnv *, jobject) {
 
 JNIEXPORT jint JNICALL
 Java_com_piyushbodaa_autark_engine_Native_prompt(JNIEnv * env, jobject, jobjectArray jroles, jobjectArray jcontents,
-                                              jboolean thinking, jfloat temperature, jfloat top_p, jint max_tokens) {
+                                              jboolean resume, jboolean thinking, jfloat temperature, jfloat top_p,
+                                              jint top_k, jfloat min_p, jfloat presence_penalty, jint max_tokens) {
     autark::ReplyOptions options;
     options.thinking = thinking;
     options.temperature = temperature;
     options.top_p = top_p;
+    options.top_k = top_k;
+    options.min_p = min_p;
+    options.presence_penalty = presence_penalty;
     options.max_tokens = max_tokens;
-    return g_engine.prompt(messages_from(env, jroles, jcontents), options);
+    const auto messages = messages_from(env, jroles, jcontents);
+    return resume ? g_engine.resume(messages, options) : g_engine.prompt(messages, options);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_piyushbodaa_autark_engine_Native_ended(JNIEnv *, jobject) {
+    return static_cast<jint>(g_engine.ended());
 }
 
 JNIEXPORT jint JNICALL

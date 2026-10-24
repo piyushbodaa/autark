@@ -12,11 +12,17 @@ then chats entirely offline: no account, no cloud, and conversations never leave
   phones (below).
 - **Only new text is processed:** Qwen 3.5 mixes attention with recurrent layers, which cannot be
   rewound, so each follow-up is appended to exactly what the model has already seen, and
-  checkpoints of the recurrent state make Retry and new chats cheap. While the user types, the
-  chat so far is processed ahead of time. When Android takes the memory back, the conversation
-  is saved to disk and picked up again in well under a second.
-- **Memory:** weights are repacked for the fast kernels as they load, and the memory-mapped file
-  pages they came from are then let go, so the model isn't held twice.
+  checkpoints of the recurrent state make Retry, new chats and editing the last message cheap. A
+  reply cut off at the length limit continues where it stopped, with nothing processed again.
+  While the user types, the chat so far is processed ahead of time. When Android takes the memory
+  back, the conversation is saved to disk and picked up again in well under a second.
+- **Loading:** weights are repacked for the fast kernels as they load, on every core (a small
+  patch to llama.cpp's loader, in `third_party/patches`), and the memory-mapped file pages they
+  came from are let go as it goes, so the model is never held twice.
+- **Thinking that ends:** with "Think before answering" on, the reasoning is closed after three
+  quarters of the reply's length limit, so a small model that thinks in circles still answers.
+- **From any app:** select text anywhere and pick *Ask Autark*, or share text to Autark, to
+  summarize it, explain it, reply to it or fix its grammar, still offline.
 - **Light:** Kotlin + Jetpack Compose, one variable font (Inter Tight), no images, no analytics,
   and no network calls except the one model download. Native code loads straight from the APK
   (16 MB on arm64) instead of being unpacked into a second copy.
@@ -30,9 +36,11 @@ app/src/main/java/.../engine/      LlamaEngine: one model, one dedicated thread
 app/src/main/java/.../models/      Which model this phone gets, and getting it onto the phone
 app/src/main/java/.../data/        Chats (one JSON file each) and settings
 app/src/main/java/.../ui/          Compose screens, styled after piyushbodaa.com
-tools/engine-test                  Runs the engine on a desktop with a real model, and checks it
+tools/engine-test                  Runs the engine on a desktop with a real model, and checks it;
+                                   engine-ask prints replies to a list of questions, to compare settings
 tools/device-test                  Runs that test and llama-bench on phones in Firebase Test Lab
 third_party/llama.cpp              llama.cpp, as a git submodule pinned to v0.7.0
+third_party/patches                Autark's changes to llama.cpp, compiled in place of the files they patch
 ```
 
 ## Build
@@ -57,6 +65,13 @@ non-zero if a check fails:
 cmake -S tools/engine-test -B build/engine-test -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/engine-test
 build/engine-test/engine-test path/to/Qwen3.5-2B-Q4_K_M.gguf
+```
+
+`engine-ask` asks a list of questions, each in a new chat, and prints the replies as Markdown, to
+compare sampling settings by reading them side by side:
+
+```sh
+build/engine-test/engine-ask path/to/Qwen3.5-2B-Q4_K_M.gguf tools/engine-test/questions.txt --seeds 2 --top-k 20
 ```
 
 The same test, along with llama.cpp's `llama-bench`, also runs on phones you don't own, through
