@@ -23,8 +23,8 @@ android {
         applicationId = "com.piyushbodaa.autark"
         minSdk = 28
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.4.1"
 
         // On-device tests of the engine, for Firebase Test Lab: tools/device-test/run.sh.
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
