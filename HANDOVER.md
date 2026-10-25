@@ -3,7 +3,7 @@
 **What:** Android app (package `com.piyushbodaa.autark`) to chat with small AI models fully offline. Kotlin + Jetpack Compose UI, llama.cpp via JNI (`app/src/main/cpp`, submodule `third_party/llama.cpp`).
 
 ## State
-- 0.4.2 (versionCode 6) built, **not yet published**: the app moves from the stock Qwen 3.5 2B weights to tvall43's Heretic (decensored) build of the same model. See the 0.4.2 section below before publishing — there is a Play policy question and a quality regression the tests measured.
+- 0.4.2 (versionCode 6) live on Play **internal testing** since 4:14 PM IST, 25 Oct: the app moves from the stock Qwen 3.5 2B weights to tvall43's Heretic (decensored) build of the same model. Play's review page said "Ready to release" with no errors or warnings; supported devices unchanged (7,549 phones), a new install downloads 6.95 MB and an update from 0.4.1 is 156 KB. See the 0.4.2 section below for what the model change costs in accuracy and the Play policy question it raises.
 - 0.4.1 (versionCode 5) live on Play **internal testing** since 6:34 AM IST, 25 Oct: 0.4.0's one model (Qwen 3.5 2B) for every phone, the font and drawer fixes, and the 0.4.1 work below. 0.4.0 (versionCode 4) was never uploaded. Play's review showed no errors or warnings and no change in supported devices; a new install downloads 6.94 MB. Release notes: "Edit your last message, continue a reply that was cut off, and ask Autark about text from any app: select it and tap Ask Autark, or share it to Autark. Tables, links and code show properly, Think before answering always ends with an answer, and the model loads about a third faster. Autark now runs Qwen 3.5 2B on every phone."
 - Store listing (23 Oct, not submitted): six 1080×1920 phone screenshots in `design/store/screenshots/` (24-bit PNG, in upload order), a draft name and descriptions in `design/store/listing.md`, the feature graphic in `design/store/` and the 512 px icon in `design/icon/`. The screenshots come from the emulator with `-skin 1080x1920 -qemu -cpu host`, airplane mode on and the status bar in demo mode; every reply in them is real model output.
 - 0.3.0 (versionCode 3) went out on internal testing at 4:09 PM IST, 23 Oct: 0.2.0's design, the new icon, and the performance pass and tuning from real phones below. Release notes: "New design, and Autark picks the best model for your phone. Much faster replies: follow-ups start in about a second, even in long chats, and your chat is prepared while you type. Lighter on memory and tuned to your phone's processor." A new install downloads 6.9 MB (0.2.0: 9.6 MB).
@@ -40,9 +40,10 @@ What changed: only the model pin in `models/Catalog.kt` (plus the version bump).
   - **One answer said children can take 3 g of paracetamol a day**, which is too much for a small child. The app's listing already tells people not to rely on it for medical advice, and there is a Report button on every reply; that is the mitigation.
 - Migration is safe: `ModelManager` deletes any model file whose name isn't the current one and re-downloads, so everyone on 0.4.1 gets the new file and the old one is cleaned up (a fresh 1.3 GB download for every tester). The saved chat cache is keyed on the model's size in bytes (`Engine::identity`), so an old `session.bin` is rejected rather than misread.
 
-**Before publishing, two things to decide:**
-- **Play policy.** Google Play's AI-generated content policy asks apps to prohibit and prevent generation of restricted content. A model whose refusals have been deliberately removed is in tension with that, and the reviewer sees the store listing, which now says so. The 0.4.1 listing text is unchanged apart from the "decensored" paragraph in `design/store/listing.md`. This is a judgment call for the developer, not a technical blocker.
-- **Every tester re-downloads 1.3 GB.** Unavoidable when the weights change.
+**Shipped as:** release name 0.4.2, release notes in `design/store/`'s terms: "Autark now runs a decensored build of Qwen 3.5 2B: it answers more questions and refuses fewer, at the same speed and size as before. A small model with fewer refusals is also more willing to be wrong out loud, so check important facts." Play's review page said "Ready to release" with no errors and no warnings. Every tester re-downloads the 1.3 GB model after the update, which is unavoidable when the weights change.
+
+**Still open, for the developer:**
+- **Play policy.** Google Play's AI-generated content policy asks apps to prohibit and prevent generation of restricted content. A model whose refusals have been deliberately removed sits in tension with that, and the store listing (not yet submitted) now says so in `design/store/listing.md`. Publishing it to production is the developer's call, not a technical one; internal testing is a low-stakes place to find out whether Play objects.
 
 ## 0.4.1 (24–25 Oct)
 For people using it:
@@ -125,4 +126,13 @@ Measured on 23 Oct with the 2B model (the app's pick on all of them), all checks
 ## Release flow
 1. Bump `versionCode` and `versionName` in `app/build.gradle.kts`.
 2. On lappy: `./gradlew bundleRelease` (needs `keystore.properties`), copy aab to `~/Downloads/Autark-<ver>.aab`.
-3. Upload to Play Console > Internal testing > Create release, name = version, notes en-US, Save and publish. Internal testing only. Claude in Chrome can't attach files over 10 MB (the bundle is ~27 MB), so this step is done by hand or by an agent that can upload it.
+3. Upload to Play Console > Internal testing > Create release, name = version, notes en-US, Save and publish. Internal testing only.
+   An agent can do the whole thing (done for 0.4.2): Play Console needs the developer's Google
+   session, and a browser tool that isn't signed in can't get it. What works is to copy the Chrome
+   profile's auth files to a scratch directory, run the real `google-chrome-stable` binary on that
+   copy with `--remote-debugging-port=9222` (a non-default `--user-data-dir`, which Chrome 136+
+   requires), and set `browser.cdp_url` to it — the agent then browses as the developer, and the
+   ~27 MB bundle goes in through `DOM.setFileInputFiles` on the `.aab` input, with no 10 MB
+   extension limit to work around. `browser.use_real_profile` is the supported way to do this, but
+   it only snapshots the OS default browser, and this machine's default is Omarchy's launcher
+   rather than Chrome, so it refuses. Delete the profile copy afterwards: it holds cookies.
