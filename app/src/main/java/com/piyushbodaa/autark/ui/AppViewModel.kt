@@ -214,7 +214,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * 1.5–2 for Qwen 3.5 2B, but side by side (tools/engine-test/engine-ask, 24 Oct) it made the
      * 2B worse: with it, sums came out wrong (working them out repeats digits, which it penalizes),
      * and one reply said to share a UPI PIN with delivery partners. So chats keep llama.cpp's usual
-     * sampling, and thinking uses the card's setting for precise work, which has no penalty.
+     * sampling, and thinking uses the card's setting for precise work, which has no penalty. That
+     * comparison ran on the stock weights, before the app moved to the decensored build (0.4.2);
+     * worth re-running if replies look off.
      */
     private fun options(s: Settings) = LlamaEngine.Options(
         thinking = s.thinking,

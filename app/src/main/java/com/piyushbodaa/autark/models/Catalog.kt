@@ -17,17 +17,19 @@ data class CatalogModel(
 
 /**
  * One model for every phone; people never have to choose. Qwen 3.5 is Apache-licensed and speaks
- * many languages (Indian ones included).
+ * many languages (Indian ones included). This build is tvall43's Heretic run of it: the weights are
+ * edited so the model answers instead of refusing, which is why it is named as decensored. It keeps
+ * the same architecture, context and speed as the original, and stays under Apache 2.0.
  */
 object Catalog {
     val model = CatalogModel(
-        id = "qwen3.5-2b",
-        name = "Qwen 3.5 2B",
-        repo = "unsloth/Qwen3.5-2B-GGUF",
-        revision = "f6d5376be1edb4d416d56da11e5397a961aca8ae",
-        fileName = "Qwen3.5-2B-Q4_K_M.gguf",
-        sizeBytes = 1_280_835_840,
-        sha256 = "aaf42c8b7c3cab2bf3d69c355048d4a0ee9973d48f16c731c0520ee914699223",
+        id = "qwen3.5-2b-heretic",
+        name = "Qwen 3.5 2B, decensored",
+        repo = "tvall43/Qwen3.5-2B-heretic-gguf",
+        revision = "b49fa6be881f769afc9c09402b78808fe8715a95",
+        fileName = "Qwen3.5-2B-heretic-Q4_K_M.gguf",
+        sizeBytes = 1_270_808_064,
+        sha256 = "e9c7c564f4a7e58da42e37377279ea1435b080b8297dc523f0626760c4cd0fa0",
         license = "Apache 2.0",
         licenseUrl = "https://www.apache.org/licenses/LICENSE-2.0",
     )

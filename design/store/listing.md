@@ -34,7 +34,9 @@ MAKE IT YOURS
 • Delete all chats in one tap
 
 UNDER THE HOOD
-Autark runs Qwen 3.5 2B (Apache 2.0) with llama.cpp (MIT), tuned for phone processors.
+Autark runs Qwen 3.5 2B (Apache 2.0) with llama.cpp (MIT), tuned for phone processors. The model is
+a decensored build of Qwen 3.5 2B: its weights are edited so it answers rather than refusing, which
+also makes it more willing to be wrong out loud. Treat it accordingly.
 
 GOOD TO KNOW
 • Needs about 1.3 GB of free space.

@@ -5,6 +5,11 @@ then chats entirely offline: no account, no cloud, and conversations never leave
 
 - **No choices to make:** one model for every phone, Qwen 3.5 2B (1.3 GB, Apache 2.0), pinned to
   a Hugging Face commit. One tap downloads it, and the chat opens as soon as the download is done.
+  The shipped weights are [tvall43's Heretic run](https://huggingface.co/tvall43/Qwen3.5-2B-heretic-gguf)
+  of Unsloth's Q4_K_M: the same architecture and size, edited so the model answers rather than
+  refusing. In side-by-side testing (`engine-ask`, 25 Oct) it kept most of the original's accuracy,
+  but it is not identical — it is measurably weaker on mental arithmetic and on facts a 2B model
+  barely holds, and it will invent detail where it lacks knowledge.
 - **Engine:** [llama.cpp](https://github.com/ggml-org/llama.cpp) v0.7.0 with Arm's KleidiAI kernels.
   The CPU backend is built for four Arm feature levels (armv8.0 → dotprod → i8mm → SME), and the
   phone loads the best one its CPU can run. SVE2 is left out: phones run it at 128 bits, where it
@@ -64,14 +69,14 @@ non-zero if a check fails:
 ```sh
 cmake -S tools/engine-test -B build/engine-test -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build/engine-test
-build/engine-test/engine-test path/to/Qwen3.5-2B-Q4_K_M.gguf
+build/engine-test/engine-test path/to/Qwen3.5-2B-heretic-Q4_K_M.gguf
 ```
 
 `engine-ask` asks a list of questions, each in a new chat, and prints the replies as Markdown, to
 compare sampling settings by reading them side by side:
 
 ```sh
-build/engine-test/engine-ask path/to/Qwen3.5-2B-Q4_K_M.gguf tools/engine-test/questions.txt --seeds 2 --top-k 20
+build/engine-test/engine-ask path/to/Qwen3.5-2B-heretic-Q4_K_M.gguf tools/engine-test/questions.txt --seeds 2 --top-k 20
 ```
 
 The same test, along with llama.cpp's `llama-bench`, also runs on phones you don't own, through
