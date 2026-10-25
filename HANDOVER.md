@@ -3,6 +3,7 @@
 **What:** Android app (package `com.piyushbodaa.autark`) to chat with small AI models fully offline. Kotlin + Jetpack Compose UI, llama.cpp via JNI (`app/src/main/cpp`, submodule `third_party/llama.cpp`).
 
 ## State
+- 0.4.2 (versionCode 6) built, **not yet published**: the app moves from the stock Qwen 3.5 2B weights to tvall43's Heretic (decensored) build of the same model. See the 0.4.2 section below before publishing — there is a Play policy question and a quality regression the tests measured.
 - 0.4.1 (versionCode 5) live on Play **internal testing** since 6:34 AM IST, 25 Oct: 0.4.0's one model (Qwen 3.5 2B) for every phone, the font and drawer fixes, and the 0.4.1 work below. 0.4.0 (versionCode 4) was never uploaded. Play's review showed no errors or warnings and no change in supported devices; a new install downloads 6.94 MB. Release notes: "Edit your last message, continue a reply that was cut off, and ask Autark about text from any app: select it and tap Ask Autark, or share it to Autark. Tables, links and code show properly, Think before answering always ends with an answer, and the model loads about a third faster. Autark now runs Qwen 3.5 2B on every phone."
 - Store listing (23 Oct, not submitted): six 1080×1920 phone screenshots in `design/store/screenshots/` (24-bit PNG, in upload order), a draft name and descriptions in `design/store/listing.md`, the feature graphic in `design/store/` and the 512 px icon in `design/icon/`. The screenshots come from the emulator with `-skin 1080x1920 -qemu -cpu host`, airplane mode on and the status bar in demo mode; every reply in them is real model output.
 - 0.3.0 (versionCode 3) went out on internal testing at 4:09 PM IST, 23 Oct: 0.2.0's design, the new icon, and the performance pass and tuning from real phones below. Release notes: "New design, and Autark picks the best model for your phone. Much faster replies: follow-ups start in about a second, even in long chats, and your chat is prepared while you type. Lighter on memory and tuned to your phone's processor." A new install downloads 6.9 MB (0.2.0: 9.6 MB).
@@ -17,6 +18,31 @@
 - New icon (23 Oct): Inter Tight's A with an orange core where the crossbar was, legs in a headline's two tones, on night. Source, tools and design board in `design/`.
 - One model for every phone: Qwen 3.5 2B (the developer's call on 23 Oct, for 0.4.0; until 0.3.0, phones under 6 GB got Qwen 3.5 0.8B). No model picker and no memory check; a single "Download · 1.3 GB" first-run button, and the chat opens as soon as DownloadManager reports the download finished. The SHA-256 pass after it ("Checking the file") is gone too: the app records the finished download and checks the size. Size alone can't tell, because DownloadManager sets aside the whole file when it starts. Models screen and GGUF import removed; upgrading deletes other models, so phones that had the 0.8B download the 2B.
 - Font weights (23 Oct, after the 0.4.0 bundle): Inter Tight's three weights are instances of one variable font, and `Font(res, weight)` doesn't set its wght axis, so every text had been drawn at Regular and Markdown bold didn't show. `Theme.kt` now sets the axis. The chat drawer, always night, now also gets light status-bar icons (the clock was dark on dark).
+
+## 0.4.2 (25 Oct) — decensored model
+What changed: only the model pin in `models/Catalog.kt` (plus the version bump). The engine, the UI and everything else are exactly 0.4.1.
+
+**The model:** `tvall43/Qwen3.5-2B-heretic-gguf`, pinned at `b49fa6be881f769afc9c09402b78808fe8715a95`, file `Qwen3.5-2B-heretic-Q4_K_M.gguf` (1,270,808,064 bytes, SHA-256 `e9c7c564…0fa0`; verified against the file's LFS oid on Hugging Face and the copy in `~/.cache/autark/models/heretic-tvall43/`). Apache 2.0. It is Unsloth's Qwen 3.5 2B run through Heretic v1.2.0, which edits the weights so the model answers instead of refusing. Same architecture, context, speed and memory as the stock weights.
+
+**Why the name says "decensored":** the model behaves differently from stock Qwen 3.5 2B in ways a user can't see from the outside, so the name, the Settings line ("Runs Qwen 3.5 2B, decensored (Apache 2.0)") and the store listing say so.
+
+**What the tests showed** (25 Oct, `engine-ask`, 4 tries per question, against stock / tvall43 / jordanwoodson / HauhauCS / huihui-ai):
+| Question | Stock | tvall43 (shipped) |
+|---|---|---|
+| Train arrives at 6:15 PM | 4/4 | 3/4 |
+| Change from ₹200 is ₹65 | 4/4 | 4/4 |
+| Paracetamol daily limit is 4 g | 4/4 | 4/4 (says 3 g, the cautious figure) |
+| Leave request | 4/4 | 4/4 |
+
+- All 19 engine checks pass; speed and memory are unchanged.
+- Two things it does that stock doesn't, both worth knowing before this reaches anyone:
+  - **It invents facts where it has none.** Asked about 4 June 1989 it answers instead of refusing, and gets the history wrong (calls it the "Chengdu Movement"). Every decensored 2B tested did this — removing the refusal doesn't add the knowledge.
+  - **One answer said children can take 3 g of paracetamol a day**, which is too much for a small child. The app's listing already tells people not to rely on it for medical advice, and there is a Report button on every reply; that is the mitigation.
+- Migration is safe: `ModelManager` deletes any model file whose name isn't the current one and re-downloads, so everyone on 0.4.1 gets the new file and the old one is cleaned up (a fresh 1.3 GB download for every tester). The saved chat cache is keyed on the model's size in bytes (`Engine::identity`), so an old `session.bin` is rejected rather than misread.
+
+**Before publishing, two things to decide:**
+- **Play policy.** Google Play's AI-generated content policy asks apps to prohibit and prevent generation of restricted content. A model whose refusals have been deliberately removed is in tension with that, and the reviewer sees the store listing, which now says so. The 0.4.1 listing text is unchanged apart from the "decensored" paragraph in `design/store/listing.md`. This is a judgment call for the developer, not a technical blocker.
+- **Every tester re-downloads 1.3 GB.** Unavoidable when the weights change.
 
 ## 0.4.1 (24–25 Oct)
 For people using it:
