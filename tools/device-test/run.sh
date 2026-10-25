@@ -14,7 +14,7 @@
 # Test Lab's phones download slowly, so put the model in a Cloud Storage folder once and name
 # it in MODELS: it is then copied onto each phone before the tests start.
 #
-#   gcloud storage cp ~/models/Qwen3.5-2B-Q4_K_M.gguf gs://BUCKET/models/
+#   gcloud storage cp ~/models/<the fileName in Catalog.kt> gs://BUCKET/models/
 #   MODELS=gs://BUCKET/models tools/device-test/run.sh ...
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -30,7 +30,7 @@ done
 files=/sdcard/Android/data/com.piyushbodaa.autark.debug/files
 models=()
 if [ -n "${MODELS:-}" ]; then
-    model=Qwen3.5-2B-Q4_K_M.gguf
+    model=$(sed -n 's/.*fileName = "\(.*\)".*/\1/p' app/src/main/java/com/piyushbodaa/autark/models/Catalog.kt)
     models=(--other-files "$files/test-models/$model=${MODELS%/}/$model")
 fi
 
