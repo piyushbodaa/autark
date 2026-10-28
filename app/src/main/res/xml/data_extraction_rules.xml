@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Conversations are private: nothing goes to cloud backup. When moving to a new phone,
+     chats and settings come along, but the multi-gigabyte models do not. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="chats/" />
+        <include domain="sharedpref" path="." />
+    </device-transfer>
+</data-extraction-rules>
