@@ -21,6 +21,7 @@ data class Message(
     val seconds: Double = 0.0,
     /** The reply stopped short (the length limit, or the app closed while writing it); Continue carries on. */
     val cut: Boolean = false,
+    val problem: ReplyProblem? = null,
 ) {
     val isUser get() = role == "user"
 }
@@ -84,7 +85,8 @@ class ChatStore(private val dir: File) {
                     .put("model", m.model ?: JSONObject.NULL)
                     .put("tokens", m.tokens)
                     .put("seconds", m.seconds)
-                    .put("cut", m.cut))
+                    .put("cut", m.cut)
+                    .put("problem", m.problem?.name ?: JSONObject.NULL))
             }
         })
 
@@ -103,6 +105,7 @@ class ChatStore(private val dir: File) {
                     tokens = m.optInt("tokens"),
                     seconds = m.optDouble("seconds", 0.0),
                     cut = m.optBoolean("cut"),
+                    problem = runCatching { ReplyProblem.valueOf(m.optString("problem")) }.getOrNull(),
                 )
             },
         )

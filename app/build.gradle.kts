@@ -145,6 +145,8 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    // Android's org.json stub has no implementation in local JVM tests.
+    testImplementation(libs.json)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.junit)
     androidTestUtil(libs.androidx.test.orchestrator)
