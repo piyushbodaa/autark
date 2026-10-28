@@ -170,6 +170,7 @@ class DeviceTest {
             val loadMs = SystemClock.elapsedRealtime() - loadStart
             val ready = engine.state.value
             val loaded = memory()
+            engine.beginReply()
             val events = engine.generate(
                 listOf("system", "user"),
                 listOf("You are Autark, a helpful assistant.", "What can you do without the internet?"),

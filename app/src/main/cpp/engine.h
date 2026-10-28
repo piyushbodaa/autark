@@ -1,8 +1,8 @@
 // Autark's inference engine: one model and one conversation at a time, on top of llama.cpp.
 //
 // Plain C++ with no JNI, so the same code runs in the app and in tools/engine-test on a
-// desktop. Every call must come from the same thread, except stop() and cancel_prefill(),
-// which only flip flags.
+// desktop. Every call must come from the same thread, except begin_reply(), stop() and
+// cancel_prefill(), which only flip flags.
 
 #pragma once
 
@@ -82,17 +82,23 @@ public:
 
     // Prepares a reply to the conversation. Returns the prompt length in tokens, or a negative
     // error code. Replacing the user's last message (an edit) is about as cheap as Retry.
-    int prompt(const std::vector<Message> & messages, const ReplyOptions & options);
+    int prompt(const std::vector<Message> & messages, const ReplyOptions & options, const std::string & chat_id = "");
 
     // Carries on with a reply that ran out of room (ended() was End::length), or that the app
     // never saw finish. `messages` ends with that reply as the app has it. Returns the prompt
     // length in tokens, or a negative error code; next() then continues the reply.
-    int resume(const std::vector<Message> & messages, const ReplyOptions & options);
+    int resume(const std::vector<Message> & messages, const ReplyOptions & options, const std::string & chat_id = "");
+
+    // Fits shared text after the instruction, using the model's template/tokenizer and the
+    // same history trimming and answer reserve as prompt(). Returns a UTF-8 prefix length in
+    // bytes, or a negative error code. Does not change the conversation cache.
+    int fit_shared(const std::vector<Message> & history, const std::string & instruction,
+                   const std::string & text, bool thinking, int max_tokens) const;
 
     // Generates one token. Sets `piece` to its text (possibly empty while a multi-byte
     // character is still being assembled) and returns true, or returns false when the reply
-    // is finished. When thinking, the reasoning is closed after three quarters of max_tokens,
-    // so that there is always room left for an answer.
+    // is finished. When thinking, the reasoning uses at most three quarters of the reply
+    // limit or remaining context, after reserving its closing text and room for an answer.
     bool next(std::string & piece);
 
     // Why the last reply ended.
@@ -102,7 +108,7 @@ public:
     // prompt() only has to process their new message. `messages` is the chat as it is (ending
     // with the last reply, or holding just the system prompt). Returns the number of tokens in
     // the cache, or a negative error code.
-    int prefill(const std::vector<Message> & messages, bool thinking, int max_tokens);
+    int prefill(const std::vector<Message> & messages, bool thinking, int max_tokens, const std::string & chat_id = "");
 
     // Keeps the conversation in the cache on disk, for when Android stops the app or takes the
     // model's memory back: loading it again is much faster than processing the chat again.
@@ -110,10 +116,16 @@ public:
     bool save_session(const std::string & path);
     bool load_session(const std::string & path);
 
+    // Identify live and saved caches independently: the last saved chat may not be the live one.
+    const std::string & cached_chat_id() const { return held_chat_id; }
+    static std::string session_chat_id(const std::string & path);
+
     // Empties the cache, for when the user deletes chats.
     void forget();
 
-    // Both safe to call from any thread.
+    // Safe to call from any thread. Begin once when the user requests a reply, before loading
+    // or preparing it, so a Stop during that work stays set until the next reply.
+    void begin_reply() { stopping = false; }
     void stop() { stopping = true; }               // ends the reply being prepared or generated
     void cancel_prefill() { cancelling = true; }   // ends a prefill() part-way
 
@@ -187,6 +199,7 @@ private:
 
     // The conversation the cache holds: the messages of the last prompt, then the reply to them.
     std::vector<Message>      conv;
+    std::string               held_chat_id;
     std::string               reply;          // text generated since, as the app received it
     bool                      reply_closed = false;  // the reply ended with an end-of-turn token
     Target                    asked;          // the last prompt; cached[0..asked.tokens.size()) holds it

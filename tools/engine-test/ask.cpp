@@ -74,6 +74,7 @@ int main(int argc, char ** argv) {
         for (int seed = 1; seed <= seeds; ++seed) {
             options.seed = static_cast<uint32_t>(seed);
             const auto start = Clock::now();
+            engine.begin_reply();
             if (engine.prompt({{"system", system}, {"user", question}}, options) < 0) {
                 fprintf(stderr, "prompt failed\n");
                 return 1;

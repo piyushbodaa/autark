@@ -93,7 +93,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Off screen, where Android may stop the app at any moment: keep a reply that's still coming in. */
     fun onAppHidden() {
-        if (_generating.value) viewModelScope.launch { c.chats.save(_current.value) }
+        if (_generating.value) viewModelScope.launch { saveChat(_current.value) }
     }
 
     // ---- chat ----
@@ -144,29 +144,48 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun stop() = c.engine.stop()
 
     /** With [resume], the conversation ends with a reply that stopped short, and this carries on with it. */
-    private fun reply(conversation: Conversation, resume: Boolean = false) {
+    private fun reply(conversation: Conversation, resume: Boolean = false, sharedInstruction: String? = null) {
         if (modelStatus.value != ModelManager.Status.Ready) {
             _current.value = conversation
             _notice.value = "Autark is still setting up."
             return
         }
         val s = settings.value
+        val sharedText = if (sharedInstruction != null) _shared.value else null
         val earlier = if (resume) conversation.messages.last() else Message("assistant", "", model = model.name)
+        c.engine.beginReply()
         _generating.value = true
         _reading.value = true
-        _current.value = if (resume) conversation else conversation.copy(messages = conversation.messages + earlier)
+        _current.value = if (resume || sharedText != null) conversation else conversation.copy(messages = conversation.messages + earlier)
 
         replyJob = viewModelScope.launch {
             try {
-                c.chats.save(conversation)
+                saveChat(conversation)
                 if (!c.engine.load(model.id, c.models.file.path, s.contextSize, threadsFor(s))) {
                     _notice.value = (engineState.value as? LlamaEngine.State.Failed)?.message ?: "Couldn't start the model."
                     return@launch
                 }
-                val (roles, contents) = transcript(conversation, s)
+                var prompt = conversation
+                if (sharedText != null && sharedInstruction != null) {
+                    val (roles, contents) = transcript(conversation, s)
+                    val fitted = c.engine.fitShared(roles, contents, sharedInstruction, sharedText.text, s.thinking, s.maxTokens)
+                    val message = "$sharedInstruction\n\n$fitted"
+                    prompt = conversation.copy(
+                        title = conversation.title.ifEmpty { titleFrom(message) },
+                        updatedAt = System.currentTimeMillis(),
+                        messages = conversation.messages + Message("user", message),
+                    )
+                    _shared.value = null
+                    _current.value = prompt.copy(messages = prompt.messages + earlier)
+                    if (fitted.length < sharedText.text.length) {
+                        _notice.value = "The shared text was shortened to leave room for an answer."
+                    }
+                    saveChat(prompt)
+                }
+                val (roles, contents) = transcript(prompt, s)
                 val text = StringBuilder(earlier.text)
                 var savedAt = System.nanoTime()
-                c.engine.generate(roles, contents, options(s), resume).collect { event ->
+                c.engine.generate(roles, contents, options(s), resume, chatId = conversation.id).collect { event ->
                     when (event) {
                         is LlamaEngine.Event.Started -> _reading.value = false
                         is LlamaEngine.Event.Text -> {
@@ -175,15 +194,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             updateReply { it.copy(text = text.toString(), cut = true) }
                             if (System.nanoTime() - savedAt > SAVE_EVERY_NANOS) {
                                 savedAt = System.nanoTime()
-                                c.chats.save(_current.value)
+                                saveChat(_current.value)
                             }
                         }
-                        is LlamaEngine.Event.Finished -> updateReply {
-                            it.copy(
-                                tokens = earlier.tokens + event.tokens,
-                                seconds = earlier.seconds + event.seconds,
-                                cut = event.end == LlamaEngine.End.Length,
-                            )
+                        is LlamaEngine.Event.Finished -> {
+                            updateReply {
+                                it.copy(
+                                    tokens = earlier.tokens + event.tokens,
+                                    seconds = earlier.seconds + event.seconds,
+                                    cut = event.end in setOf(LlamaEngine.End.Length, LlamaEngine.End.Full, LlamaEngine.End.Failed),
+                                )
+                            }
+                            when (event.end) {
+                                LlamaEngine.End.Full -> _notice.value = "The model ran out of memory for this conversation. The reply is incomplete. Try a larger context in Settings."
+                                LlamaEngine.End.Failed -> _notice.value = "The model stopped unexpectedly. The reply is incomplete. Try again."
+                                else -> Unit
+                            }
                         }
                     }
                 }
@@ -202,7 +228,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }.copy(updatedAt = System.currentTimeMillis())
                     _current.value = final
                     _reading.value = false
-                    c.chats.save(final)
+                    saveChat(final)
                     _generating.value = false
                 }
             }
@@ -257,7 +283,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val s = settings.value
             if (c.engine.load(model.id, c.models.file.path, s.contextSize, threadsFor(s))) {
                 val (roles, contents) = transcript(conversation, s)
-                c.engine.prefill(roles, contents, s.thinking, s.maxTokens)
+                c.engine.prefill(roles, contents, s.thinking, s.maxTokens, chatId = conversation.id)
             }
         }
     }
@@ -288,7 +314,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteChat(id: String) = afterStopping {
         c.chats.delete(id)
-        c.engine.forget()  // the model's cache may hold this chat
+        c.engine.forget(id)
         if (_current.value.id == id) _current.value = Conversation()
     }
 
@@ -306,17 +332,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (trimmed.isEmpty()) return
         afterStopping {
             _current.value = Conversation()
-            _shared.value = Shared(trimmed.take(SHARED_MAX_CHARS).trimEnd(), shortened = trimmed.length > SHARED_MAX_CHARS)
+            _shared.value = Shared(trimmed, shortened = false)
             onTyping()  // a question about it is on its way
         }
     }
 
     /** Asks about the shared text: [instruction] goes first, then the text. */
     fun sendShared(instruction: String) {
-        val shared = _shared.value ?: return
+        if (_shared.value == null) return
         if (instruction.isBlank() || _generating.value) return
-        _shared.value = null
-        send("${instruction.trim()}\n\n${shared.text}")
+        reply(_current.value, sharedInstruction = instruction.trim())
     }
 
     fun dropShared() {
@@ -338,6 +363,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         _notice.value = null
     }
 
+    private suspend fun saveChat(conversation: Conversation) {
+        if (!c.chats.save(conversation)) {
+            _notice.value = "Couldn't save this chat. Check your device's free space."
+        }
+    }
+
     // ---- settings ----
 
     fun updateSettings(change: (Settings) -> Settings) = c.settings.update(change)
@@ -352,8 +383,5 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private companion object {
         const val SAVE_EVERY_NANOS = 2_000_000_000L
-
-        /** About 1,500 tokens of English, which leaves room for a reply at the default memory setting. */
-        const val SHARED_MAX_CHARS = 6000
     }
 }

@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
 
     /** Text selected in another app ("Ask Autark" in its menu) or shared from one. */
     private fun receive(intent: Intent) {
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
         val text = when (intent.action) {
             Intent.ACTION_PROCESS_TEXT -> intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)
             Intent.ACTION_SEND -> intent.getCharSequenceExtra(Intent.EXTRA_TEXT)

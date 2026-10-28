@@ -75,9 +75,23 @@ Java_com_piyushbodaa_autark_engine_Native_supportsThinking(JNIEnv *, jobject) {
 }
 
 JNIEXPORT jint JNICALL
+Java_com_piyushbodaa_autark_engine_Native_fitShared(JNIEnv * env, jobject, jobjectArray jroles,
+                                                 jobjectArray jcontents, jbyteArray instruction,
+                                                 jbyteArray text, jboolean thinking, jint max_tokens) {
+    return g_engine.fit_shared(messages_from(env, jroles, jcontents), utf8_string(env, instruction),
+                               utf8_string(env, text), thinking, max_tokens);
+}
+
+JNIEXPORT void JNICALL
+Java_com_piyushbodaa_autark_engine_Native_beginReply(JNIEnv *, jobject) {
+    g_engine.begin_reply();
+}
+
+JNIEXPORT jint JNICALL
 Java_com_piyushbodaa_autark_engine_Native_prompt(JNIEnv * env, jobject, jobjectArray jroles, jobjectArray jcontents,
                                               jboolean resume, jboolean thinking, jfloat temperature, jfloat top_p,
-                                              jint top_k, jfloat min_p, jfloat presence_penalty, jint max_tokens) {
+                                              jint top_k, jfloat min_p, jfloat presence_penalty, jint max_tokens,
+                                              jbyteArray chat_id) {
     autark::ReplyOptions options;
     options.thinking = thinking;
     options.temperature = temperature;
@@ -87,7 +101,8 @@ Java_com_piyushbodaa_autark_engine_Native_prompt(JNIEnv * env, jobject, jobjectA
     options.presence_penalty = presence_penalty;
     options.max_tokens = max_tokens;
     const auto messages = messages_from(env, jroles, jcontents);
-    return resume ? g_engine.resume(messages, options) : g_engine.prompt(messages, options);
+    const auto id = utf8_string(env, chat_id);
+    return resume ? g_engine.resume(messages, options, id) : g_engine.prompt(messages, options, id);
 }
 
 JNIEXPORT jint JNICALL
@@ -97,8 +112,8 @@ Java_com_piyushbodaa_autark_engine_Native_ended(JNIEnv *, jobject) {
 
 JNIEXPORT jint JNICALL
 Java_com_piyushbodaa_autark_engine_Native_prefill(JNIEnv * env, jobject, jobjectArray jroles, jobjectArray jcontents,
-                                               jboolean thinking, jint max_tokens) {
-    return g_engine.prefill(messages_from(env, jroles, jcontents), thinking, max_tokens);
+                                               jboolean thinking, jint max_tokens, jbyteArray chat_id) {
+    return g_engine.prefill(messages_from(env, jroles, jcontents), thinking, max_tokens, utf8_string(env, chat_id));
 }
 
 // Returns the next piece of text (possibly empty), or null when the reply is finished.
@@ -126,6 +141,18 @@ Java_com_piyushbodaa_autark_engine_Native_saveSession(JNIEnv * env, jobject, jst
 JNIEXPORT jboolean JNICALL
 Java_com_piyushbodaa_autark_engine_Native_loadSession(JNIEnv * env, jobject, jstring jpath) {
     return g_engine.load_session(path_string(env, jpath));
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_piyushbodaa_autark_engine_Native_chatId(JNIEnv * env, jobject) {
+    const auto & id = g_engine.cached_chat_id();
+    return id.empty() ? nullptr : to_bytes(env, id);
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_piyushbodaa_autark_engine_Native_sessionChatId(JNIEnv * env, jobject, jstring jpath) {
+    const auto id = autark::Engine::session_chat_id(path_string(env, jpath));
+    return id.empty() ? nullptr : to_bytes(env, id);
 }
 
 JNIEXPORT void JNICALL

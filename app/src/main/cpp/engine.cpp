@@ -12,6 +12,7 @@
 #include <malloc.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #endif
 
 #ifdef __ANDROID__
@@ -85,9 +86,12 @@ size_t release_mapped_pages(const std::string & path) {
     char line[1024];
     while (fgets(line, sizeof(line), maps)) {
         uintptr_t start = 0, end = 0;
+        unsigned int dev_major = 0, dev_minor = 0;
         unsigned long long inode = 0;
-        if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %*s %*s %*s %llu", &start, &end, &inode) != 3) continue;
-        if (inode != static_cast<unsigned long long>(st.st_ino) || end <= start) continue;
+        if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %*s %*s %x:%x %llu",
+                   &start, &end, &dev_major, &dev_minor, &inode) != 5) continue;
+        if (inode != static_cast<unsigned long long>(st.st_ino) ||
+            dev_major != major(st.st_dev) || dev_minor != minor(st.st_dev) || end <= start) continue;
         if (madvise(reinterpret_cast<void *>(start), end - start, MADV_DONTNEED) == 0) released += end - start;
     }
     fclose(maps);
@@ -158,6 +162,7 @@ bool same(const Message & a, const Message & b) { return a.role == b.role && a.c
 
 constexpr uint32_t SESSION_MAGIC   = 0x4b545541;  // "AUTK"
 constexpr uint32_t SESSION_VERSION = 1;
+constexpr uint32_t SESSION_CHAT_MAGIC = 0x44495441;  // "ATID", optional cache-owner footer
 
 struct Writer {
     FILE * f;
@@ -521,6 +526,41 @@ int Engine::whole(const std::vector<Message> & input, bool thinking, int reserve
     return 0;
 }
 
+int Engine::fit_shared(const std::vector<Message> & history, const std::string & instruction,
+                       const std::string & text, bool thinking, int max_tokens) const {
+    if (!ctx) return ERR_NO_MODEL;
+    const int reserve = std::min(max_tokens, n_ctx / 2);
+    std::vector<Message> messages = history;
+    messages.push_back({"user", ""});
+    const auto fits = [&](size_t length) {
+        messages.back().content = instruction + "\n\n" + text.substr(0, length);
+        Target target;
+        return whole(messages, thinking, reserve, target);
+    };
+    const int full = fits(text.size());
+    if (full == 0) return static_cast<int>(text.size());
+    if (full != ERR_TOO_LONG) return full;
+    const int empty = fits(0);
+    if (empty < 0) return empty;
+
+    // Search character boundaries, but decide what fits from tokens in the complete prompt,
+    // including the instruction, system message and model-specific formatting.
+    std::vector<size_t> boundaries{0};
+    for (size_t i = 1; i < text.size(); ++i) {
+        if ((static_cast<unsigned char>(text[i]) & 0xC0) != 0x80) boundaries.push_back(i);
+    }
+    boundaries.push_back(text.size());
+    size_t low = 0, high = boundaries.size() - 1;
+    while (low + 1 < high) {
+        const size_t mid = low + (high - low) / 2;
+        const int rc = fits(boundaries[mid]);
+        if (rc == 0) low = mid;
+        else if (rc == ERR_TOO_LONG) high = mid;
+        else return rc;
+    }
+    return low == 0 ? ERR_TOO_LONG : static_cast<int>(boundaries[low]);
+}
+
 // Whether the cache already holds `answer` as the reply to `asked`.
 bool Engine::holds_reply(const std::vector<Message> & asked, const Message & answer) const {
     if (conv.size() != asked.size() || answer_of(reply) != answer.content) return false;
@@ -551,6 +591,7 @@ bool Engine::restore(const Checkpoint & checkpoint) {
 
 void Engine::forget_conversation() {
     conv.clear();
+    held_chat_id.clear();
     reply.clear();
     reply_closed = false;
     asked = {};
@@ -651,9 +692,9 @@ int Engine::process(const Target & target, size_t from, bool want_logits) {
     return 0;
 }
 
-int Engine::prompt(const std::vector<Message> & messages, const ReplyOptions & options) {
+int Engine::prompt(const std::vector<Message> & messages, const ReplyOptions & options, const std::string & chat_id) {
     if (!ctx) return ERR_NO_MODEL;
-    stopping = false;
+    if (stopping.load()) return ERR_ABORTED;
     finish();
     stats = {};
     how_ended = End::none;
@@ -707,6 +748,7 @@ int Engine::prompt(const std::vector<Message> & messages, const ReplyOptions & o
     if (rc != 0) return rc;
 
     conv = messages;
+    held_chat_id = chat_id;
     asked = target;
     asked_thinking = options.thinking;
     // When the template opens the reasoning block itself, the app still needs to see it.
@@ -718,10 +760,10 @@ int Engine::prompt(const std::vector<Message> & messages, const ReplyOptions & o
     return stats.tokens;
 }
 
-int Engine::resume(const std::vector<Message> & messages, const ReplyOptions & options) {
+int Engine::resume(const std::vector<Message> & messages, const ReplyOptions & options, const std::string & chat_id) {
     if (!ctx) return ERR_NO_MODEL;
     if (messages.size() < 2 || messages.back().role != "assistant") return ERR_TEMPLATE;
-    stopping = false;
+    if (stopping.load()) return ERR_ABORTED;
     finish();
     stats = {};
     how_ended = End::none;
@@ -761,6 +803,7 @@ int Engine::resume(const std::vector<Message> & messages, const ReplyOptions & o
     }
     if (static_cast<int>(target.tokens.size()) + 64 > n_ctx) return ERR_TOO_LONG;
     const Target prompt_part = rebuilt ? Target{} : asked;
+    const bool owner_changed = held_chat_id != chat_id;
     forget_conversation();
 
     const auto & tokens = target.tokens;
@@ -780,6 +823,8 @@ int Engine::resume(const std::vector<Message> & messages, const ReplyOptions & o
     if (rc != 0) return rc;
 
     conv = question;
+    held_chat_id = chat_id;
+    unsaved = unsaved || owner_changed;
     if (rebuilt) {
         // Retry renders the question again instead: its reply may open differently.
         asked = {};
@@ -806,7 +851,11 @@ void Engine::start_reply(const ReplyOptions & options, size_t reply_start) {
     n_generated = 0;
     max_tokens = options.max_tokens;
     thought_tokens = 0;
-    thought_budget = options.max_tokens * 3 / 4;
+    const auto closing = common_tokenize(llama_model_get_vocab(model), THINK_OUT_OF_ROOM, false, true);
+    const int room = std::max(0, n_ctx - static_cast<int>(cached.size()) - static_cast<int>(closing.size()));
+    // Reserve the injected closing text first, then leave a quarter of the usable space for
+    // the answer even when the reply limit is larger than the remaining context.
+    thought_budget = std::min(options.max_tokens, room) * 3 / 4;
 }
 
 bool Engine::next(std::string & piece) {
@@ -867,6 +916,10 @@ bool Engine::next(std::string & piece) {
 // as the next piece.
 bool Engine::close_thought(std::string & piece) {
     const llama_tokens tokens = common_tokenize(llama_model_get_vocab(model), THINK_OUT_OF_ROOM, false, true);
+    if (tokens.size() >= static_cast<size_t>(n_ctx) - cached.size()) {
+        how_ended = End::full;  // do not decode past the context, or leave no room for the answer
+        return finish();
+    }
     batch.clear();
     for (size_t i = 0; i < tokens.size(); ++i) {
         batch.add(tokens[i], static_cast<llama_pos>(cached.size() + i), 0, i + 1 == tokens.size());
@@ -941,6 +994,11 @@ bool Engine::save_session(const std::string & path) {
     w.pod<uint64_t>(ckpt_turn.data.empty() ? 0 : ckpt_turn.n_tokens);
     w.vec(ckpt_turn.data);
     w.vec(state);
+    // Older readers ignore the footer. It lets deletion identify a saved cache without
+    // loading a model or reading the potentially large state that comes before it.
+    w.bytes(held_chat_id.data(), held_chat_id.size());
+    w.pod<uint32_t>(static_cast<uint32_t>(held_chat_id.size()));
+    w.pod(SESSION_CHAT_MAGIC);
     const bool ok = fclose(f) == 0 && w.ok && rename(temp.c_str(), path.c_str()) == 0;
     if (!ok) {
         remove(temp.c_str());
@@ -949,6 +1007,25 @@ bool Engine::save_session(const std::string & path) {
     unsaved = false;
     LOGI("Saved a %zu-token conversation (%.0f MiB)", cached.size(), (state.size() + ckpt_turn.data.size()) / 1048576.0);
     return true;
+}
+
+std::string Engine::session_chat_id(const std::string & path) {
+    FILE * f = fopen(path.c_str(), "rb");
+    if (!f) return {};
+    std::string id;
+    if (fseek(f, 0, SEEK_END) == 0) {
+        const long size = ftell(f);
+        uint32_t length = 0, magic = 0;
+        if (size >= 8 && fseek(f, -8, SEEK_END) == 0 &&
+            fread(&length, sizeof(length), 1, f) == 1 && fread(&magic, sizeof(magic), 1, f) == 1 &&
+            magic == SESSION_CHAT_MAGIC && length > 0 && length <= 4096 && length <= size - 8 &&
+            fseek(f, -8 - static_cast<long>(length), SEEK_END) == 0) {
+            id.resize(length);
+            if (fread(id.data(), 1, length, f) != length) id.clear();
+        }
+    }
+    fclose(f);
+    return id;
 }
 
 bool Engine::load_session(const std::string & path) {
@@ -994,6 +1071,7 @@ bool Engine::load_session(const std::string & path) {
     }
     cached = std::move(tokens);
     conv = std::move(messages);
+    held_chat_id = session_chat_id(path);
     reply = std::move(text);
     reply_closed = closed;
     prompt.tokens.assign(cached.begin(), cached.begin() + static_cast<long>(asked_len));
@@ -1005,7 +1083,8 @@ bool Engine::load_session(const std::string & path) {
     return true;
 }
 
-int Engine::prefill(const std::vector<Message> & messages, bool thinking, int max_tokens_hint) {
+int Engine::prefill(const std::vector<Message> & messages, bool thinking, int max_tokens_hint,
+                    const std::string & chat_id) {
     if (!ctx) return ERR_NO_MODEL;
     cancelling = false;
     if (messages.empty()) return static_cast<int>(cached.size());
@@ -1022,7 +1101,11 @@ int Engine::prefill(const std::vector<Message> & messages, bool thinking, int ma
         // generated, so the next message is simply appended.
         next_conv.assign(messages.begin(), messages.end() - 1);
         next_reply = messages.back().content;
-        if (holds_reply(next_conv, messages.back())) return static_cast<int>(cached.size());
+        if (holds_reply(next_conv, messages.back())) {
+            unsaved = unsaved || held_chat_id != chat_id;
+            held_chat_id = chat_id;
+            return static_cast<int>(cached.size());
+        }
         if (!render(messages, false, thinking, prompt)) return ERR_TEMPLATE;
         const auto & parts = prompt.parts;
         const int a = find_content(parts, next_reply, static_cast<int>(parts.size()));
@@ -1075,8 +1158,9 @@ int Engine::prefill(const std::vector<Message> & messages, bool thinking, int ma
         LOGI("Prefill: %zu tokens, %zu reused from cache", tokens.size(), keep);
         if (rc != 0) return rc;
     }
-    unsaved = unsaved || !holds_reply(next_conv, {"assistant", next_reply});
+    unsaved = unsaved || held_chat_id != chat_id || !holds_reply(next_conv, {"assistant", next_reply});
     conv = next_conv;
+    held_chat_id = chat_id;
     reply = next_reply;
     reply_closed = !next_conv.empty();
     asked = next_asked;
