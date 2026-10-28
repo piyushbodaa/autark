@@ -33,7 +33,15 @@ private const val ERR_TEMPLATE = -7
  * The conversation in the model's cache is kept in [sessionFile] whenever the model lets go,
  * so that picking the chat up again doesn't mean reading all of it again.
  */
-class LlamaEngine(private val nativeLibDir: String, private val sessionFile: File) {
+class LlamaEngine internal constructor(
+    private val nativeLibDir: String,
+    private val sessionFile: File,
+    private val backend: NativeBackend?,
+) {
+    constructor(nativeLibDir: String, sessionFile: File) : this(nativeLibDir, sessionFile, null)
+
+    // Keep JNI loading lazy, on the first native call rather than the app's startup thread.
+    private val native: NativeBackend get() = backend ?: Native
 
     sealed interface State {
         data object Empty : State
@@ -89,24 +97,24 @@ class LlamaEngine(private val nativeLibDir: String, private val sessionFile: Fil
             val key = "$modelId|$path|$contextSize|$threads"
             if (key == loadedKey && _state.value is State.Ready) return@withContext true
             if (!initialized) {
-                Native.init(nativeLibDir)
+                native.init(nativeLibDir)
                 initialized = true
             }
-            if (loadedKey != null) Native.saveSession(sessionFile.path)  // reloading with new settings
+            if (loadedKey != null) native.saveSession(sessionFile.path)  // reloading with new settings
             _state.value = State.Loading(modelId)
-            val allocated = Native.load(path, contextSize, threads.generation, threads.batch)
+            val allocated = native.load(path, contextSize, threads.generation, threads.batch)
             if (allocated < 0) {
                 loadedKey = null
                 _state.value = State.Failed(modelId, messageFor(allocated))
                 false
             } else {
                 loadedKey = key
-                if (sessionFile.exists() && !Native.loadSession(sessionFile.path)) sessionFile.delete()
+                if (sessionFile.exists() && !native.loadSession(sessionFile.path)) sessionFile.delete()
                 _state.value = State.Ready(
                     modelId = modelId,
-                    description = Native.describe()?.toString(Charsets.UTF_8).orEmpty(),
+                    description = native.describe()?.toString(Charsets.UTF_8).orEmpty(),
                     contextSize = allocated,
-                    canThink = Native.supportsThinking(),
+                    canThink = native.supportsThinking(),
                 )
                 true
             }
@@ -118,16 +126,20 @@ class LlamaEngine(private val nativeLibDir: String, private val sessionFile: Fil
      * messages ("system", "user" or "assistant"). With [resume], the last message is a reply
      * that was cut off, and the flow carries on with it. Call [stop] to end the reply early;
      * the flow then finishes normally with whatever was generated.
+     * Create [request] before loading when Stop must also cover that pending work.
      */
-    fun generate(roles: List<String>, contents: List<String>, options: Options, resume: Boolean = false): Flow<Event> = flow {
+    fun generate(
+        roles: List<String>, contents: List<String>, options: Options,
+        resume: Boolean = false, request: ReplyRequest = ReplyRequest(),
+    ): Flow<Event> = flow {
         stopRequested = false
         mutex.withLock {
             // Stop may be tapped while a prefill still holds the engine.
-            if (stopRequested) {
+            if (request.isStopped || stopRequested) {
                 emit(Event.Finished(0, 0.0, End.Stopped))
                 return@withLock
             }
-            val promptTokens = Native.prompt(
+            val promptTokens = native.prompt(
                 bytes(roles),
                 bytes(contents),
                 resume,
@@ -140,25 +152,25 @@ class LlamaEngine(private val nativeLibDir: String, private val sessionFile: Fil
                 options.maxTokens,
             )
             if (promptTokens < 0) throw EngineException(promptTokens, messageFor(promptTokens))
-            if (stopRequested) Native.stop()
+            if (request.isStopped || stopRequested) native.stop()
             emit(Event.Started(promptTokens))
 
             val start = System.nanoTime()
             var tokens = 0
             while (true) {
                 currentCoroutineContext().ensureActive()
-                val piece = Native.next() ?: break
+                val piece = native.next() ?: break
                 tokens++
                 if (piece.isNotEmpty()) emit(Event.Text(piece.toString(Charsets.UTF_8)))
             }
-            val end = End.entries.getOrElse(Native.ended()) { End.None }
+            val end = End.entries.getOrElse(native.ended()) { End.None }
             emit(Event.Finished(tokens, (System.nanoTime() - start) / 1e9, end))
         }
     }.flowOn(dispatcher)
 
     fun stop() {
         stopRequested = true
-        Native.stop()
+        native.stop()
     }
 
     /**
@@ -168,18 +180,18 @@ class LlamaEngine(private val nativeLibDir: String, private val sessionFile: Fil
     suspend fun prefill(roles: List<String>, contents: List<String>, thinking: Boolean, maxTokens: Int) {
         mutex.withLock {
             withContext(dispatcher) {
-                if (_state.value is State.Ready) Native.prefill(bytes(roles), bytes(contents), thinking, maxTokens)
+                if (_state.value is State.Ready) native.prefill(bytes(roles), bytes(contents), thinking, maxTokens)
             }
         }
     }
 
     /** Ends a running [prefill], for when the user moves to another chat. */
-    fun cancelPrefill() = Native.cancelPrefill()
+    fun cancelPrefill() = native.cancelPrefill()
 
     /** Writes the conversation in the cache to disk, once nothing else is running. */
     suspend fun saveSession() = mutex.withLock {
         withContext(dispatcher) {
-            if (loadedKey != null) Native.saveSession(sessionFile.path)
+            if (loadedKey != null) native.saveSession(sessionFile.path)
         }
     }
 
@@ -190,8 +202,8 @@ class LlamaEngine(private val nativeLibDir: String, private val sessionFile: Fil
     suspend fun release(stillWanted: () -> Boolean) = mutex.withLock {
         withContext(dispatcher) {
             if (loadedKey != null && !stillWanted()) {
-                Native.saveSession(sessionFile.path)
-                Native.unload()
+                native.saveSession(sessionFile.path)
+                native.unload()
                 loadedKey = null
                 _state.value = State.Empty
             }
@@ -201,7 +213,7 @@ class LlamaEngine(private val nativeLibDir: String, private val sessionFile: Fil
     /** Drops the conversation from the cache and from disk, for when chats are deleted. */
     suspend fun forget() = mutex.withLock {
         withContext(dispatcher) {
-            if (loadedKey != null) Native.forget()
+            if (loadedKey != null) native.forget()
             sessionFile.delete()
         }
     }

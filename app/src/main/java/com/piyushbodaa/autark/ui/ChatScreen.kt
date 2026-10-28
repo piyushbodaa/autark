@@ -428,6 +428,7 @@ private fun AssistantMessage(
             streaming && !parts.stillThinking -> Waiting(waiting)
             !streaming && parts.stillThinking -> Fine("Stopped before answering.")
         }
+        if (!streaming) message.problem?.let { Fine(it.message) }
         if (!streaming) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
                 if (message.tokens > 0 && message.seconds > 0) {

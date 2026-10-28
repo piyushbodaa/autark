@@ -9,6 +9,7 @@ import com.piyushbodaa.autark.data.Message
 import com.piyushbodaa.autark.data.Settings
 import com.piyushbodaa.autark.engine.EngineException
 import com.piyushbodaa.autark.engine.LlamaEngine
+import com.piyushbodaa.autark.engine.ReplyRequest
 import com.piyushbodaa.autark.models.CatalogModel
 import com.piyushbodaa.autark.models.ModelManager
 import kotlinx.coroutines.CancellationException
@@ -53,6 +54,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
     private var replyJob: Job? = null
+    private var replyRequest: ReplyRequest? = null
     private var prefillJob: Job? = null
     private var prefilledFor: Pair<String, Int>? = null  // conversation id and message count
 
@@ -141,7 +143,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (conversation.messages.lastOrNull()?.let { !it.isUser && it.cut } == true) reply(conversation, resume = true)
     }
 
-    fun stop() = c.engine.stop()
+    fun stop() {
+        replyRequest?.stop()
+        cancelPrefill()
+        c.engine.stop()
+    }
 
     /** With [resume], the conversation ends with a reply that stopped short, and this carries on with it. */
     private fun reply(conversation: Conversation, resume: Boolean = false) {
@@ -151,6 +157,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val s = settings.value
+        val request = ReplyRequest()
+        replyRequest = request
         val earlier = if (resume) conversation.messages.last() else Message("assistant", "", model = model.name)
         _generating.value = true
         _reading.value = true
@@ -159,31 +167,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         replyJob = viewModelScope.launch {
             try {
                 c.chats.save(conversation)
-                if (!c.engine.load(model.id, c.models.file.path, s.contextSize, threadsFor(s))) {
+                if (request.isStopped) return@launch
+                val loaded = c.engine.load(model.id, c.models.file.path, s.contextSize, threadsFor(s))
+                if (request.isStopped) return@launch
+                if (!loaded) {
                     _notice.value = (engineState.value as? LlamaEngine.State.Failed)?.message ?: "Couldn't start the model."
                     return@launch
                 }
                 val (roles, contents) = transcript(conversation, s)
                 val text = StringBuilder(earlier.text)
                 var savedAt = System.nanoTime()
-                c.engine.generate(roles, contents, options(s), resume).collect { event ->
+                c.engine.generate(roles, contents, options(s), resume, request).collect { event ->
                     when (event) {
                         is LlamaEngine.Event.Started -> _reading.value = false
                         is LlamaEngine.Event.Text -> {
                             text.append(event.text)
                             // Marked cut until it finishes, in case Android stops the app first.
-                            updateReply { it.copy(text = text.toString(), cut = true) }
+                            updateReply { it.copy(text = text.toString(), cut = true, problem = null) }
                             if (System.nanoTime() - savedAt > SAVE_EVERY_NANOS) {
                                 savedAt = System.nanoTime()
                                 c.chats.save(_current.value)
                             }
                         }
-                        is LlamaEngine.Event.Finished -> updateReply {
-                            it.copy(
-                                tokens = earlier.tokens + event.tokens,
-                                seconds = earlier.seconds + event.seconds,
-                                cut = event.end == LlamaEngine.End.Length,
-                            )
+                        is LlamaEngine.Event.Finished -> {
+                            val outcome = replyOutcome(event.end)
+                            updateReply {
+                                it.copy(
+                                    tokens = earlier.tokens + event.tokens,
+                                    seconds = earlier.seconds + event.seconds,
+                                    cut = outcome.cut,
+                                    problem = outcome.problem,
+                                )
+                            }
+                            outcome.problem?.let { _notice.value = it.message }
                         }
                     }
                 }
@@ -204,6 +220,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     _reading.value = false
                     c.chats.save(final)
                     _generating.value = false
+                    if (replyRequest === request) replyRequest = null
                 }
             }
         }
@@ -327,7 +344,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         cancelPrefill()
         viewModelScope.launch {
             if (_generating.value) {
-                c.engine.stop()
+                stop()
                 replyJob?.join()
             }
             action()

@@ -56,6 +56,7 @@ Needs JDK 17+, Android SDK 36, NDK 29.0.14206865 and CMake 3.31.6.
 git clone --recursive https://github.com/piyushbodaa/autark   # or: git submodule update --init
 ./gradlew assembleDebug          # app/build/outputs/apk/debug/
 ./gradlew bundleRelease          # app/build/outputs/bundle/release/ (for Google Play)
+./gradlew testDebugUnitTest lintDebug  # local reply-lifecycle/persistence tests and Android lint
 ```
 
 The first build compiles llama.cpp for two ABIs and takes about 10–15 minutes; later builds take
