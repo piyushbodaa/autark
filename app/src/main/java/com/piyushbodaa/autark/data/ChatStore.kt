@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 
 data class Message(
@@ -48,18 +49,24 @@ class ChatStore(private val dir: File) {
             .sortedByDescending { it.updatedAt }
     }
 
-    suspend fun save(conversation: Conversation) = withContext(Dispatchers.IO) {
-        if (conversation.messages.isEmpty()) return@withContext
-        writing.withLock {
-            dir.mkdirs()
-            val file = File(dir, "${conversation.id}.json")
-            val temp = File(dir, "${conversation.id}.json.tmp")
-            temp.writeText(encode(conversation).toString())
-            temp.renameTo(file)
+    /** False means the chat is still in memory but could not be saved to disk. */
+    suspend fun save(conversation: Conversation): Boolean = withContext(Dispatchers.IO) {
+        if (conversation.messages.isEmpty()) return@withContext true
+        try {
+            writing.withLock {
+                dir.mkdirs()
+                val file = File(dir, "${conversation.id}.json")
+                val temp = File(dir, "${conversation.id}.json.tmp")
+                temp.writeText(encode(conversation).toString())
+                if (!temp.renameTo(file)) throw IOException("Couldn't replace the saved chat")
+            }
+        } catch (_: IOException) {
+            return@withContext false
         }
         _conversations.update { list ->
             (listOf(conversation) + list.filter { it.id != conversation.id }).sortedByDescending { it.updatedAt }
         }
+        true
     }
 
     suspend fun delete(id: String) = withContext(Dispatchers.IO) {

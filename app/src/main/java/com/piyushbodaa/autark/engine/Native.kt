@@ -15,6 +15,15 @@ internal object Native {
 
     external fun supportsThinking(): Boolean
 
+    /** Clears the stop flag once, before a user request starts loading. Safe from any thread. */
+    external fun beginReply()
+
+    /** Returns a fitting UTF-8 prefix length, or a negative error code. */
+    external fun fitShared(
+        roles: Array<ByteArray>, contents: Array<ByteArray>, instruction: ByteArray, text: ByteArray,
+        thinking: Boolean, maxTokens: Int,
+    ): Int
+
     /**
      * Returns the prompt length in tokens, or a negative error code. With [resume], the last
      * message is a reply that was cut off, and [next] carries on with it.
@@ -30,6 +39,7 @@ internal object Native {
         minP: Float,
         presencePenalty: Float,
         maxTokens: Int,
+        chatId: ByteArray,
     ): Int
 
     /** How the last reply ended, as LlamaEngine.End's ordinal. */
@@ -42,7 +52,9 @@ internal object Native {
      * Processes a conversation ahead of the next [prompt], so that only the new message is left
      * to do. Returns the number of tokens cached, or a negative error code.
      */
-    external fun prefill(roles: Array<ByteArray>, contents: Array<ByteArray>, thinking: Boolean, maxTokens: Int): Int
+    external fun prefill(
+        roles: Array<ByteArray>, contents: Array<ByteArray>, thinking: Boolean, maxTokens: Int, chatId: ByteArray,
+    ): Int
 
     /** Ends the reply being prepared or generated. Safe to call from any thread. */
     external fun stop()
@@ -55,6 +67,10 @@ internal object Native {
 
     /** Picks up a conversation written by [saveSession] for the same model. */
     external fun loadSession(path: String): Boolean
+
+    /** The owners of the live and saved caches, which may be different chats. */
+    external fun chatId(): ByteArray?
+    external fun sessionChatId(path: String): ByteArray?
 
     /** Empties the cache. */
     external fun forget()

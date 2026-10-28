@@ -74,7 +74,8 @@ struct Runner {
         Step step;
         step.label = label;
         const auto start = Clock::now();
-        const int rc = resume ? engine.resume(chat, options) : engine.prompt(chat, options);
+        engine.begin_reply();
+        const int rc = resume ? engine.resume(chat, options, "engine-test") : engine.prompt(chat, options, "engine-test");
         step.prompt_ms = ms_since(start);
         if (rc < 0) {
             fprintf(stderr, "%s: prompt failed with %d\n", label.c_str(), rc);
@@ -104,7 +105,7 @@ struct Runner {
         Step step;
         step.label = label;
         const auto start = Clock::now();
-        const int rc = engine.prefill(chat, options.thinking, options.max_tokens);
+        const int rc = engine.prefill(chat, options.thinking, options.max_tokens, "engine-test");
         step.prompt_ms = ms_since(start);
         if (rc < 0) {
             fprintf(stderr, "%s: prefill failed with %d\n", label.c_str(), rc);
@@ -252,7 +253,8 @@ int main(int argc, char ** argv) {
         const bool loaded = engine.load_session(session);
         step.prompt_ms = ms_since(start);
         run.steps.push_back(step);
-        run.check(saved && loaded, "saved and picked up again");
+        run.check(saved && loaded && engine.cached_chat_id() == "engine-test" &&
+                  autark::Engine::session_chat_id(session) == "engine-test", "saved and picked up again with its owner");
         remove(session.c_str());
     }
     run.prefill(chat, "after reload");
@@ -287,6 +289,17 @@ int main(int argc, char ** argv) {
         run.check(run.steps.back().stats.processed == 0 && cut == in_one_go, "nothing to process, same text as in one go");
         // Once the cache has moved on, the reply is rebuilt from the chat.
         counting.back().content = answer_of(cut);
+        // Changing only the owner while resuming cached tokens must still update the saved footer.
+        const char * tmp = getenv("TMPDIR");
+        const std::string owner_session = std::string(tmp && *tmp ? tmp : "/tmp") + "/engine-test-owner.bin";
+        const bool saved_owner = engine.save_session(owner_session);
+        engine.begin_reply();
+        const int resumed = engine.resume(counting, run.options, "resumed-chat");
+        const bool saved_resume = engine.save_session(owner_session);
+        run.steps.push_back(Step{"resume cache owner"});
+        run.check(saved_owner && resumed >= 0 && engine.last_prompt().processed == 0 && saved_resume &&
+                  autark::Engine::session_chat_id(owner_session) == "resumed-chat", "saved new owner without decoding");
+        remove(owner_session.c_str());
         run.prefill({{"system", SYSTEM_PROMPT}}, "new chat: prefill");
         run.ask(counting, "continue later", -1, true);
         run.check(run.steps.back().generated > 0 && engine.ended() != autark::End::failed, "carried on");
@@ -312,11 +325,76 @@ int main(int argc, char ** argv) {
     }
     // Reasoning that would run past its budget is closed with room left for an answer.
     run.options.max_tokens = 160;
-    const std::string brief = run.ask({{"system", SYSTEM_PROMPT},
-                                       {"user", "A shop sells pens at 7 rupees each. I buy 13 pens and pay with a "
-                                                "100 rupee note. How much change do I get? Check your working twice."}},
-                                      "thinking budget");
+    Chat budget_chat = {{"system", SYSTEM_PROMPT},
+                        {"user", "A shop sells pens at 7 rupees each. I buy 13 pens and pay with a "
+                                 "100 rupee note. How much change do I get? Check your working twice."}};
+    const std::string brief = run.ask(budget_chat, "thinking budget");
     run.check(brief.find("</think>") != std::string::npos && !answer_of(brief).empty(), "closed, then answered");
+    run.options = plain;
+
+    // An identical completed chat can take ownership without processing its tokens again.
+    budget_chat.push_back({"assistant", answer_of(brief)});
+    engine.prefill(budget_chat, false, plain.max_tokens, "matching-chat");
+    run.steps.push_back(Step{"matching cache owner"});
+    run.check(engine.cached_chat_id() == "matching-chat", "matching completed chat adopted the cache");
+    engine.prefill(budget_chat, false, plain.max_tokens, "engine-test");
+
+    // Visiting a chat whose prefill is a no-op, or stopping before its prompt, leaves the owner alone.
+    run.steps.push_back(Step{"no-op cache owner"});
+    engine.prefill(fresh, false, plain.max_tokens, "other-chat");
+    run.check(engine.cached_chat_id() == "engine-test", "unanswered chat did not take over the cache");
+    engine.begin_reply();
+    engine.stop();
+    run.steps.push_back(Step{"stopped cache owner"});
+    run.check(engine.prompt(fresh, plain, "other-chat") == autark::ERR_ABORTED &&
+              engine.cached_chat_id() == "engine-test", "stopped request did not take over the cache");
+
+    // Stop during loading must survive until prompt/resume, and the next request must reset it.
+    engine.begin_reply();
+    engine.stop();
+    const int short_ctx = engine.load(model_path, 512, n_threads, n_threads_batch);
+    if (short_ctx < 0) return 1;
+    run.steps.push_back(Step{"stop while loading"});
+    run.check(engine.prompt(fresh, plain) == autark::ERR_ABORTED &&
+              engine.resume({fresh[0], fresh[1], {"assistant", "Partial reply"}}, plain) == autark::ERR_ABORTED,
+              "loading did not clear Stop");
+
+    // Shared CJK, Indic and emoji text is fitted by tokens in the actual short-context prompt.
+    run.options.max_tokens = 1024;
+    run.options.thinking = true;
+    const Chat history = {{"system", SYSTEM_PROMPT}};
+    const std::string instruction = "Summarize this text briefly:";
+    for (const std::string & unit : {std::string("这是要总结的文章。"), std::string("यह संक्षेप करने का पाठ है।"),
+                                    std::string("🌍📖🙂")}) {
+        std::string text;
+        for (int i = 0; i < 500; ++i) text += unit;
+        const int keep = engine.fit_shared(history, instruction, text, true, run.options.max_tokens);
+        const bool valid = keep > 0 && static_cast<size_t>(keep) < text.size() &&
+                           (static_cast<unsigned char>(text[keep]) & 0xC0) != 0x80;
+        run.steps.push_back(Step{"fit shared UTF-8"});
+        run.check(valid, "cut at a character boundary");
+        if (!valid) continue;
+        Chat fitted = history;
+        fitted.push_back({"user", instruction + "\n\n" + text.substr(0, static_cast<size_t>(keep))});
+        run.ask(fitted, "shared: short ctx", 1);
+        run.check(run.steps.back().stats.tokens + std::min(run.options.max_tokens, short_ctx / 2) <= short_ctx,
+                  "prompt fits with its answer reserve");
+        run.steps.push_back(Step{"instruction too long"});
+        run.check(engine.fit_shared(history, text, "small share", true, run.options.max_tokens) == autark::ERR_TOO_LONG,
+                  "oversized instruction rejected before sending");
+    }
+
+    // A reply limit much larger than the available context must still allow a visible answer.
+    std::string material;
+    for (int i = 0; i < 500; ++i) material += " one two three";
+    const std::string think_instruction = "Count from 1 to 1000 in your thinking, then answer with OK. Text:";
+    const int keep = engine.fit_shared(history, think_instruction, material, true, run.options.max_tokens);
+    if (keep < 0) return 1;
+    Chat near_full = history;
+    near_full.push_back({"user", think_instruction + "\n\n" + material.substr(0, static_cast<size_t>(keep))});
+    const std::string bounded = run.ask(near_full, "thinking: short ctx");
+    run.check(bounded.find("</think>") != std::string::npos && !answer_of(bounded).empty() &&
+              engine.ended() != autark::End::failed, "closed and answered within the context");
     run.options = plain;
 
     run.print();
