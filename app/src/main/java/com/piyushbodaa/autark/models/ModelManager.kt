@@ -2,6 +2,7 @@ package com.piyushbodaa.autark.models
 
 import android.app.DownloadManager
 import android.content.Context
+import android.os.Build
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
@@ -14,6 +15,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 
 /**
@@ -31,7 +34,14 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
     }
 
     private val dir: File = (context.getExternalFilesDir("models") ?: File(context.filesDir, "models")).apply { mkdirs() }
-    val file = File(dir, model.fileName)
+    private val downloadFile = File(dir, model.fileName)
+
+    // Before Android 11, another app with legacy storage access can change files in
+    // external app directories. Only pass an authenticated internal copy to native code.
+    private val privateDir = File(context.filesDir, "verified-models")
+    private val privateFile = File(privateDir, model.fileName)
+    private val needsPrivateCopy = Build.VERSION.SDK_INT < Build.VERSION_CODES.R || privateFile.isFile
+    val file = if (needsPrivateCopy) privateFile else downloadFile
 
     private val downloads = context.getSystemService(DownloadManager::class.java)
     private val prefs = context.getSharedPreferences("models", Context.MODE_PRIVATE)
@@ -50,17 +60,25 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
                     startPolling()
                 }
                 isDownloaded() -> _status.value = Status.Ready
+                needsPrivateCopy && prefs.getBoolean(DONE_KEY + model.fileName, false) && downloadFile.isFile -> {
+                    _status.value = Status.Downloading(downloadFile.length(), model.sizeBytes, waiting = false)
+                    val generation = downloadGeneration
+                    poller = scope.launch(Dispatchers.IO) {
+                        guardDownloadAccess { finishDownload(generation, -1) }
+                    }
+                }
             }
         }
     }
 
+    @Synchronized
     fun download() {
         downloadGeneration++
         poller?.cancel()
         guardDownloadAccess {
             val previous = downloadId()
             if (previous >= 0) downloads.remove(previous)
-            file.delete()  // DownloadManager would otherwise save to "name-1.gguf"
+            downloadFile.delete()  // DownloadManager would otherwise save to "name-1.gguf"
             val request = DownloadManager.Request(model.url.toUri())
                 .setTitle("Autark")
                 .setDescription("Downloading Autark's model")
@@ -77,6 +95,7 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
         }
     }
 
+    @Synchronized
     fun cancel() {
         downloadGeneration++
         poller?.cancel()
@@ -84,6 +103,7 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
             val id = downloadId()
             if (id >= 0) downloads.remove(id)  // also deletes the partial file
             prefs.edit { remove(DOWNLOAD_KEY + model.id) }
+            downloadFile.delete()
             file.delete()
             _status.value = Status.Absent
         }
@@ -99,7 +119,9 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
                 remove(key)
             }
         }
-        dir.listFiles().orEmpty().filter { it.name != model.fileName }.forEach { it.delete() }
+        for (directory in listOf(dir, privateDir)) {
+            directory.listFiles().orEmpty().filter { it.name != model.fileName }.forEach { it.delete() }
+        }
     }
 
     private fun startPolling() {
@@ -129,20 +151,7 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
                 .takeIf { it > 0 } ?: model.sizeBytes
             when (state) {
                 DownloadManager.STATUS_SUCCESSFUL -> {
-                    // This runs in the IO poller, once per successful download, before trusting it.
-                    val whole = file.length() == model.sizeBytes && file.matchesSha256(model.sha256)
-                    if (generation != downloadGeneration || downloadId() != id) return
-                    prefs.edit {
-                        remove(DOWNLOAD_KEY + model.id)
-                        if (whole) putBoolean(DONE_KEY + model.fileName, true)
-                        else remove(DONE_KEY + model.fileName)
-                    }
-                    if (whole) {
-                        _status.value = Status.Ready
-                    } else {
-                        file.delete()
-                        _status.value = Status.Failed("The download was incomplete or damaged. Please try again.")
-                    }
+                    finishDownload(generation, id)
                 }
                 DownloadManager.STATUS_FAILED -> {
                     val reason = c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
@@ -153,6 +162,36 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
                 DownloadManager.STATUS_PAUSED -> _status.value = Status.Downloading(done, total, waiting = true)
                 else -> _status.value = Status.Downloading(done, total, waiting = false)
             }
+        }
+    }
+
+    private fun finishDownload(generation: Int, id: Long) {
+        var staged: File? = null
+        try {
+            val verified = if (needsPrivateCopy) {
+                privateDir.mkdirs()
+                val copy = File.createTempFile("model-", ".partial", privateDir)
+                staged = copy
+                downloadFile.copyVerifiedTo(copy, model.sizeBytes, model.sha256)
+            } else {
+                downloadFile.length() == model.sizeBytes && downloadFile.matchesSha256(model.sha256)
+            }
+            synchronized(this) {
+                if (generation != downloadGeneration || downloadId() != id) return
+                if (verified) staged?.let { copy ->
+                    Files.move(copy.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                }
+                prefs.edit {
+                    remove(DOWNLOAD_KEY + model.id)
+                    if (verified) putBoolean(DONE_KEY + model.fileName, true)
+                    else remove(DONE_KEY + model.fileName)
+                }
+                if (needsPrivateCopy || !verified) downloadFile.delete()
+                _status.value = if (verified) Status.Ready
+                    else Status.Failed("The download was incomplete or damaged. Please try again.")
+            }
+        } finally {
+            staged?.delete()
         }
     }
 
@@ -193,14 +232,30 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
 }
 
 internal fun File.matchesSha256(expected: String): Boolean {
+    return digestTo(null, null, expected)
+}
+
+internal fun File.copyVerifiedTo(destination: File, size: Long, expected: String): Boolean {
+    if (length() != size) return false
+    return destination.outputStream().buffered().use { output ->
+        digestTo(output, size, expected)
+    }
+}
+
+private fun File.digestTo(output: java.io.OutputStream?, expectedBytes: Long?, expected: String): Boolean {
     val digest = MessageDigest.getInstance("SHA-256")
+    var bytes = 0L
     inputStream().buffered().use { input ->
         val buffer = ByteArray(64 * 1024)
         while (true) {
             val count = input.read(buffer)
             if (count < 0) break
+            bytes += count
+            if (expectedBytes != null && bytes > expectedBytes) return false
             digest.update(buffer, 0, count)
+            output?.write(buffer, 0, count)
         }
     }
+    if (expectedBytes != null && bytes != expectedBytes) return false
     return digest.digest().joinToString("") { "%02x".format(it) }.equals(expected, ignoreCase = true)
 }

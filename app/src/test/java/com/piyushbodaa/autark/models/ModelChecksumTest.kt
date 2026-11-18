@@ -31,6 +31,15 @@ class ModelChecksumTest {
         File(temporaryFolder.root, "missing.gguf").matchesSha256(ABC_SHA256)
     }
 
+    @Test fun privateCopyAuthenticatesTheBytesItKeeps() {
+        val source = temporaryFolder.newFile().apply { writeText("abc") }
+        val copy = temporaryFolder.newFile()
+        assertTrue(source.copyVerifiedTo(copy, 3, ABC_SHA256))
+        source.writeText("abd")
+        assertTrue(copy.readText() == "abc")
+        assertFalse(source.copyVerifiedTo(copy, 3, ABC_SHA256))
+    }
+
     companion object {
         private const val ABC_SHA256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
     }
