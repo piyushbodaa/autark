@@ -3,6 +3,7 @@ package com.piyushbodaa.autark.models
 import android.app.DownloadManager
 import android.content.Context
 import android.os.Build
+import android.os.Environment
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import kotlinx.coroutines.CoroutineScope
@@ -33,14 +34,16 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
         data class Failed(val message: String) : Status
     }
 
-    private val dir: File = (context.getExternalFilesDir("models") ?: File(context.filesDir, "models")).apply { mkdirs() }
+    private val externalDir = context.getExternalFilesDir("models")
+    private val dir = (externalDir ?: File(context.filesDir, "models")).apply { mkdirs() }
     private val downloadFile = File(dir, model.fileName)
 
     // Before Android 11, another app with legacy storage access can change files in
-    // external app directories. Only pass an authenticated internal copy to native code.
+    // external app directories. Removable media can also change outside Android.
     private val privateDir = File(context.filesDir, "verified-models")
     private val privateFile = File(privateDir, model.fileName)
-    private val needsPrivateCopy = Build.VERSION.SDK_INT < Build.VERSION_CODES.R || privateFile.isFile
+    private val needsPrivateCopy = Build.VERSION.SDK_INT < Build.VERSION_CODES.R ||
+        (externalDir != null && Environment.isExternalStorageRemovable(externalDir)) || privateFile.isFile
     val file = if (needsPrivateCopy) privateFile else downloadFile
 
     private val downloads = context.getSystemService(DownloadManager::class.java)
@@ -60,7 +63,7 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
                     startPolling()
                 }
                 isDownloaded() -> _status.value = Status.Ready
-                needsPrivateCopy && prefs.getBoolean(DONE_KEY + model.fileName, false) && downloadFile.isFile -> {
+                prefs.getBoolean(DONE_KEY + model.fileName, false) && downloadFile.isFile -> {
                     _status.value = Status.Downloading(downloadFile.length(), model.sizeBytes, waiting = false)
                     val generation = downloadGeneration
                     poller = scope.launch(Dispatchers.IO) {
@@ -89,6 +92,7 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
             prefs.edit {
                 putLong(DOWNLOAD_KEY + model.id, id)
                 remove(DONE_KEY + model.fileName)
+                remove(READY_KEY + model.fileName)
             }
             _status.value = Status.Downloading(0, model.sizeBytes, waiting = false)
             startPolling()
@@ -102,7 +106,11 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
         guardDownloadAccess {
             val id = downloadId()
             if (id >= 0) downloads.remove(id)  // also deletes the partial file
-            prefs.edit { remove(DOWNLOAD_KEY + model.id) }
+            prefs.edit {
+                remove(DOWNLOAD_KEY + model.id)
+                remove(DONE_KEY + model.fileName)
+                remove(READY_KEY + model.fileName)
+            }
             downloadFile.delete()
             file.delete()
             _status.value = Status.Absent
@@ -183,8 +191,9 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
                 }
                 prefs.edit {
                     remove(DOWNLOAD_KEY + model.id)
-                    if (verified) putBoolean(DONE_KEY + model.fileName, true)
-                    else remove(DONE_KEY + model.fileName)
+                    remove(DONE_KEY + model.fileName)
+                    if (verified) putBoolean(READY_KEY + model.fileName, true)
+                    else remove(READY_KEY + model.fileName)
                 }
                 if (needsPrivateCopy || !verified) downloadFile.delete()
                 _status.value = if (verified) Status.Ready
@@ -212,7 +221,7 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
 
     // DownloadManager sets aside the whole file as soon as it starts, so the size alone says nothing.
     private fun isDownloaded() =
-        prefs.getBoolean(DONE_KEY + model.fileName, false) && file.length() == model.sizeBytes
+        prefs.getBoolean(READY_KEY + model.fileName, false) && file.length() == model.sizeBytes
 
     private fun downloadId() = prefs.getLong(DOWNLOAD_KEY + model.id, -1)
 
@@ -226,8 +235,9 @@ class ModelManager(private val context: Context, private val scope: CoroutineSco
     companion object {
         private const val DOWNLOAD_KEY = "download:"
 
-        /** Set only after a completed download's size and SHA-256 match the catalog. */
+        // Older builds authenticated an external filename without recording the storage policy.
         private const val DONE_KEY = "verified:"
+        private const val READY_KEY = "verified-storage:"
     }
 }
 
